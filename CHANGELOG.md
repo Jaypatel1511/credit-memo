@@ -55,18 +55,27 @@ unescaped when the .docx is built.
 **The package installed a top-level `tests` package into site-packages.**
 `find_packages()` in `setup.py` swept the test suite into the distribution, so
 with credit-memo 0.1.0 installed, `import tests` in *any* project resolved to
-this package's tests. Package discovery is now an explicit
+this package's tests. Unlike the build-backend floor above, this one **did**
+ship: the published 0.1.0 wheel contains a top-level `tests/` directory and
+declares `top_level.txt = creditmemo\ntests`. Package discovery is now an explicit
 `include = ["creditmemo*"]`, and CI fails the build if any top-level package
 other than `creditmemo` appears in the wheel.
 
 **Build backend floor raised to `setuptools>=61`.** 0.1.0 declared
 `setuptools>=42` alongside a PEP 621 `[project]` table. setuptools below 61
-cannot read `[project]`: it does not error, it builds a wheel whose `Summary`,
-`Home-page` and `License` are `UNKNOWN` and which carries **no
-`Requires-Python`**, so pip would install it on unsupported interpreters. This
-was measured against the 0.1.0 source with setuptools 59.6.0. Because
-`[build-system].requires` is baked into a release, the old floor stays wrong in
-0.1.0 forever; the fix takes effect from 0.2.0 onward.
+cannot read `[project]`: it does not error, it builds a correctly named wheel
+containing every module, but with `Summary: UNKNOWN`, `License: UNKNOWN` and
+**no `Requires-Python`** — so pip would install it on an unsupported
+interpreter. Measured against the 0.1.0 source with setuptools 59.6.0.
+
+**No published artifact carries this defect.** `python -m build` resolves
+`setuptools>=42` to a current setuptools under build isolation, so the 0.1.0
+wheel on PyPI has `Metadata-Version: 2.4`, the real `Summary`, `License: MIT`
+and `Requires-Python: >=3.9`. Nothing needs regenerating and nothing installed
+from PyPI is affected. The wrong floor was a latent hazard for anyone building
+0.1.0 from its sdist without build isolation, not a defect in what shipped.
+Because `[build-system].requires` is baked into a release, the old floor stays
+wrong in the 0.1.0 sdist forever; the fix takes effect from 0.2.0 onward.
 
 **Three version strings, nothing keeping them in step.** 0.1.0 declared its
 version in `pyproject.toml`, `setup.py` and `creditmemo/__init__.py`.
@@ -75,19 +84,28 @@ source of truth, and a test asserts `creditmemo.__version__` matches it.
 
 ### Added
 
-- `creditmemo/tables.py` — shared Markdown-table helpers (escaping, row
-  splitting, separator detection, block grouping) used by both renderers, so
-  the two sides cannot drift.
-- Test suite grew from **29 tests (0.1.0) to 64 (0.2.0)**, including gates that
-  count table rows and cells out of the actual Markdown string and the actual
-  saved .docx and compare them, rather than asserting a written-down total.
+- `creditmemo/tables.py` — shared Markdown-table helpers: escaping, row
+  splitting, block grouping (`iter_segments`, which the .docx renderer walks
+  the whole memo with) and row extraction (`content_rows`, the one definition
+  of what counts as a table row, used by the gates and by the installed-wheel
+  smoke check). One rule, one place, both sides.
+- Test suite grew from **29 tests (0.1.0) to 85 (0.2.0)**. The load-bearing
+  .docx gate is positional — table for table, row for row, cell for cell,
+  against the Markdown the same deal produces — because counting alone cannot
+  tell a correct memo from one with every value in the wrong cell. The header
+  table, which has no Markdown counterpart, is anchored to its documented label
+  set and to the `DealProfile` fields its values come from. The `Table Grid`
+  style and the bold header row the README promises are gated against the saved
+  document, and against the README sentence itself.
 - `.github/workflows/ci.yml` — the project had no CI at all. Runs the suite on
-  Python 3.9–3.12, builds the wheel and checks its contents and metadata, then
-  installs that wheel into a clean environment and renders the README deal,
-  failing if the tables did not survive. Action versions are pinned by commit
-  SHA.
+  Python 3.9–3.12; builds the sdist and wheel, checks their contents and
+  metadata, then installs **that same wheel** into a clean environment and
+  renders a deal with adversarial risk rows, failing if the tables did not
+  survive. Action versions are pinned by commit SHA.
 - `scripts/check_wheel.py` and `scripts/smoke_installed_wheel.py`, runnable
-  locally as well as in CI.
+  locally as well as in CI. `check_wheel.py` also gates the sdist: without
+  `MANIFEST.in` the tarball loses `tests/conftest.py`, `tests/__init__.py`,
+  `scripts/` and the workflow, and its test suite cannot run.
 
 ### Known limitations
 
@@ -97,10 +115,28 @@ source of truth, and a test asserts `creditmemo.__version__` matches it.
   widths, merged cells, number alignment) has nowhere to come from. Rebuilding
   the .docx path directly from the deal object is deferred to a later release.
 - A free-text field (`use_of_proceeds`, `mission`, `impact_narrative`,
-  `deal_summary`) whose own text contains a line beginning with `|` is now
-  rendered as a table in the .docx. Markdown does the same thing with such
-  input, so the two outputs agree; neither escapes pipes inside multi-line
-  narrative blocks.
+  `deal_summary`) whose own text contains a line beginning with `|` is rendered
+  as a table in the .docx — and **the two outputs do not agree about it.** GFM
+  requires a delimiter row under the header before it will read pipe lines as a
+  table, so a lone pipe line inside a narrative stays a paragraph in Markdown:
+
+      >>> markdown.markdown("Intro line.\n| smuggled | row |\nOutro line.\n",
+      ...                   extensions=["tables"])
+      '<p>Intro line.\n| smuggled | row |\nOutro line.</p>'
+
+  while the .docx renderer groups any run of pipe-prefixed lines into a table
+  and turns the same input into a one-row Word table. Pipes *are* escaped in
+  every value the section generators interpolate into a table cell; they are
+  not escaped inside multi-line narrative blocks, and that is where the two
+  renderers part company. A memo whose narrative text contains pipe-prefixed
+  lines will not look the same in Word as in Markdown.
+- The `.docx` renderer treats the **second line** of a table block as the
+  delimiter rule and nothing else, so a memo row made only of `-` and `:` is
+  content and survives. The cost of that rule is the converse: a stray
+  `|---|---|` in narrative text, with no header line above it, becomes a
+  one-row Word table rather than being silently swallowed. Not guessing is the
+  right failure mode here — `-` is the commonest not-applicable placeholder an
+  underwriter types, and guessing dropped those rows.
 
 ## [0.1.0] — 2026-05-06
 

@@ -2,20 +2,27 @@
 Shared Markdown-table helpers.
 
 The Markdown renderer emits pipe tables; the .docx renderer parses them back
-into real Word tables. Both sides need the same rules for escaping, splitting
-and recognising separator rows, so they live here rather than being duplicated
-(and drifting) in two places.
+into real Word tables. Both sides need the same rules for escaping, splitting,
+grouping lines into table blocks and deciding which row is the delimiter rule,
+so they live here rather than being duplicated (and drifting) in two places.
+
+Every consumer goes through these helpers: :func:`iter_segments` is what the
+.docx renderer walks the memo with, and :func:`content_rows` is what the test
+suite and ``scripts/smoke_installed_wheel.py`` count rows with.
 """
-from typing import Iterator, List, Sequence
+from typing import Iterator, List, Optional, Sequence, Tuple
 
 __all__ = [
     "escape_cell",
     "unescape_cell",
     "split_row",
     "is_table_line",
-    "is_separator_row",
+    "has_separator_shape",
+    "separator_index",
+    "iter_segments",
     "iter_table_blocks",
     "block_to_rows",
+    "content_rows",
 ]
 
 
@@ -93,13 +100,25 @@ def is_table_line(line: str) -> bool:
     return line.strip().startswith("|")
 
 
-def is_separator_row(line: str) -> bool:
+def has_separator_shape(line: str) -> bool:
     """
-    True for the ``|---|---|`` rule under a table header.
+    True if ``line`` looks like a GFM delimiter rule: every cell non-empty and
+    made only of ``-`` and ``:``.
 
-    Every cell must be non-empty and made only of ``-`` and ``:``. A signature
-    block row such as ``| IC Chair | | | |`` has empty cells and is therefore
-    content, not a separator.
+    Shape alone must never decide whether a row is dropped. ``| - | - | - |`` is
+    an ordinary content row — ``-`` is the commonest not-applicable placeholder
+    an underwriter types — and it has exactly this shape. Only
+    :func:`separator_index` decides, and it decides by position, because
+    position is what the renderers actually control: each emits exactly one
+    delimiter rule, immediately under the header.
+
+    The non-empty requirement is GFM's rule for a valid delimiter row. It is not
+    what keeps a signature-block row such as ``| IC Chair | | | |`` out of the
+    rule: that row is content because of the words in it and because it sits at
+    index 2 of its block, not because its other cells are empty. What the
+    requirement does exclude is a block whose second line is ``| | | |`` — an
+    all-empty row is not a valid delimiter, so that block has no delimiter and
+    every line in it is content.
     """
     cells = split_row(line)
     if not cells:
@@ -107,35 +126,78 @@ def is_separator_row(line: str) -> bool:
     return all(c and set(c) <= set("-:") for c in cells)
 
 
-def iter_table_blocks(lines: Sequence[str]) -> Iterator[List[str]]:
+def separator_index(block: Sequence[str]) -> Optional[int]:
     """
-    Yield each contiguous run of table lines from ``lines`` as a list of lines.
+    Index of ``block``'s delimiter rule, or ``None`` if the block has none.
+
+    GFM puts the delimiter immediately under the header row, and that is where
+    both renderers emit it, so index 1 is the only candidate. Every other line
+    is memo content whatever characters it happens to be made of.
+    """
+    if len(block) > 1 and has_separator_shape(block[1]):
+        return 1
+    return None
+
+
+def iter_segments(lines: Sequence[str]) -> Iterator[Tuple[str, object]]:
+    """
+    Walk ``lines`` in document order, yielding ``("table", block)`` for each
+    contiguous run of table lines and ``("text", line)`` for everything else.
 
     Blank lines and any non-table line end a block, so two tables separated by
-    a heading are two blocks.
+    a heading are two blocks. The .docx renderer drives its whole output from
+    this, and the conservation gates count rows from it, so the two sides cannot
+    disagree about where one table stops and the next begins.
     """
     block: List[str] = []
     for line in lines:
         if is_table_line(line):
             block.append(line)
-        elif block:
-            yield block
+            continue
+        if block:
+            yield "table", block
             block = []
+        yield "text", line
     if block:
-        yield block
+        yield "table", block
+
+
+def iter_table_blocks(lines: Sequence[str]) -> Iterator[List[str]]:
+    """Yield just the table blocks of :func:`iter_segments`, in order."""
+    for kind, payload in iter_segments(lines):
+        if kind == "table":
+            yield payload  # type: ignore[misc]
 
 
 def block_to_rows(block: Sequence[str]) -> List[List[str]]:
     """
-    Turn a table block into content rows, dropping separator rows.
+    Turn a table block into content rows, dropping its delimiter rule.
+
+    Exactly one line can be dropped — the one :func:`separator_index` points at.
+    Nothing is dropped for looking like a rule, so a risk row of ``| - | - | - |``
+    reaches the Word document like any other.
 
     Every row is padded to the widest row in the block so no cell is lost when
     a row is ragged; ragged input should not happen for memos built through
     :func:`escape_cell`, but dropping underwriter text is never the right
     failure mode.
     """
-    rows = [split_row(line) for line in block if not is_separator_row(line)]
+    sep = separator_index(block)
+    rows = [split_row(line) for i, line in enumerate(block) if i != sep]
     if not rows:
         return []
     width = max(len(r) for r in rows)
     return [r + [""] * (width - len(r)) for r in rows]
+
+
+def content_rows(lines: Sequence[str]) -> List[List[str]]:
+    """
+    Every memo table row in ``lines``, in document order, delimiter rules removed.
+
+    This is the one definition of what counts as a row. The .docx gates and
+    ``scripts/smoke_installed_wheel.py`` both call it, so neither can drift into
+    its own idea of what a separator is — a second, subtly different definition
+    is how an all-dash row went missing from the Word file and from the expected
+    count at the same time, leaving the conservation check green.
+    """
+    return [row for block in iter_table_blocks(lines) for row in block_to_rows(block)]

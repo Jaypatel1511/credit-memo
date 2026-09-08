@@ -6,6 +6,17 @@ installed distribution rather than the source tree. Renders the README
 quickstart deal to .docx and asserts the memo's tables actually reached the
 Word file — the defect that shipped in 0.1.0.
 
+The deal carries two risk rows the README quickstart does not, because the
+README deal has no `risks` at all and so never puts free underwriter text into
+a table cell: one row with a literal `|` in it, and one made only of `-`. Those
+are the two ways 0.2.0's own table path can silently put a value in the wrong
+place or drop it, and without them the installed-wheel check never touches
+either.
+
+Row counting goes through creditmemo.tables.content_rows — the same function
+the test suite counts with. A second, hand-rolled idea of what a separator row
+is used to live in this file, and it disagreed with the package's.
+
     python scripts/smoke_installed_wheel.py /tmp/smoke.docx
 
 Exits non-zero with a description of what was missing.
@@ -16,7 +27,14 @@ from creditmemo import (
     CreditMemo, DealProfile, BorrowerProfile,
     LoanTerms, FinancialData, ImpactData,
 )
+from creditmemo.data.schema import RiskFactor
+from creditmemo.tables import content_rows
 from docx import Document
+
+#: (category, description, mitigant) for the two adversarial risk rows. Each
+#: must appear in the .docx as one row, in this field order.
+PIPE_RISK = ("Credit", "Payer mix | Medicaid concentration", "3-year contract")
+DASH_RISK = ("-", "-", "-")
 
 
 def build_readme_deal() -> DealProfile:
@@ -54,6 +72,12 @@ def build_readme_deal() -> DealProfile:
             "Receipt of final appraisal satisfactory to lender",
             "Evidence of $500k matching funds from borrower",
         ],
+        risks=[
+            RiskFactor(category=PIPE_RISK[0], description=PIPE_RISK[1],
+                       severity="Medium", mitigant=PIPE_RISK[2]),
+            RiskFactor(category=DASH_RISK[0], description=DASH_RISK[1],
+                       severity="Low", mitigant=DASH_RISK[2]),
+        ],
     )
 
 
@@ -64,20 +88,16 @@ def main(path: str) -> int:
     memo.save_docx(path)
 
     doc = Document(path)
-    docx_cells = {
-        cell.text
-        for table in doc.tables for row in table.rows for cell in row.cells
-    }
-    blob = "\n".join(sorted(docx_cells))
+    docx_rows_of_text = [
+        [cell.text for cell in row.cells]
+        for table in doc.tables for row in table.rows
+    ]
+    blob = "\n".join(sorted({c for row in docx_rows_of_text for c in row}))
 
     failures = []
 
     # Every non-separator Markdown table row must have become a Word table row.
-    md_rows = sum(
-        1 for line in markdown.split("\n")
-        if line.strip().startswith("|")
-        and not set(line.replace("|", "").replace(" ", "")) <= set("-:")
-    )
+    md_rows = len(content_rows(markdown.split("\n")))
     header_rows = len(doc.tables[0].rows)
     docx_rows = sum(len(t.rows) for t in doc.tables)
     if docx_rows - header_rows != md_rows:
@@ -94,6 +114,16 @@ def main(path: str) -> int:
         if probe not in blob:
             failures.append("value %r present in the markdown is missing "
                             "from the .docx tables" % probe)
+
+    # A literal '|' must stay inside one cell, and a not-applicable '-' row must
+    # not be mistaken for the Markdown delimiter rule and dropped. Checked as
+    # whole rows, so a value landing in the wrong column fails too.
+    for label, risk in (("pipe", PIPE_RISK), ("dash", DASH_RISK)):
+        if list(risk) not in docx_rows_of_text:
+            failures.append(
+                "the %s risk row %r is not a row of the .docx — it was dropped, "
+                "split across cells, or reordered" % (label, list(risk))
+            )
 
     if failures:
         for f in failures:
