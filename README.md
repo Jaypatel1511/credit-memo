@@ -3,8 +3,8 @@
 **Generate IC credit memos from structured deal inputs.**
 
 Takes borrower profile, loan terms, financial data, impact metrics, and risk factors
-as structured Python inputs and generates a complete, formatted Investment Committee
-credit memo in Markdown or Word (.docx) format.
+as structured Python inputs and generates a formatted Investment Committee credit
+memo in Markdown or Word (.docx) format.
 
 ---
 
@@ -93,6 +93,25 @@ generate a professional IC memo instantly.
 
 ---
 
+## Word (.docx) Output
+
+`save_docx()` writes headings, paragraphs, bullet lists and **every table in the
+memo as a real Word table** — deal summary, proposed terms, NMTC structure,
+historical financials, credit metrics, projections, impact metrics, risk factors
+and the IC signature block. Tables use the built-in `Table Grid` style with a
+bold header row.
+
+It does not apply column widths, merged cells, number alignment, or a firm
+template — the .docx is built by parsing the Markdown the same deal produces, so
+it carries the memo's content and structure but no Word-specific formatting.
+
+> **credit-memo 0.1.0 dropped every table from its .docx output** while still
+> reporting success. If you generated Word memos with 0.1.0, regenerate them.
+> See the
+> [changelog](https://github.com/Jaypatel1511/credit-memo/blob/main/CHANGELOG.md).
+
+---
+
 ## Memo Sections Generated
 
 1. Executive Summary — deal overview, recommendation, key terms table
@@ -136,9 +155,12 @@ generate a professional IC memo instantly.
 
 ## Running Tests
 
-    PYTHONPATH=. pytest tests/ -v
+    pip install -e ".[docx]" pytest
+    pytest tests/ -v
 
-29 tests across all modules.
+The `.docx` gates skip if `python-docx` is not installed. Set
+`CREDITMEMO_REQUIRE_DOCX=1` to make a missing `python-docx` an error instead —
+CI does this so the gates can never pass by being skipped.
 
 ---
 

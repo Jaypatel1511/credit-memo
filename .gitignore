@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 .env
 .venv
+
+# `python -m build` leaves an extracted sdist tree behind when it cannot
+# clean up its temp directory.
+/credit_memo-*/

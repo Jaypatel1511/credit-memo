@@ -1,5 +1,6 @@
 """Transaction Structure section generator."""
 from creditmemo.data.schema import DealProfile, DEAL_TYPES
+from creditmemo.tables import escape_cell
 
 
 def generate(deal: DealProfile) -> str:
@@ -13,7 +14,7 @@ def generate(deal: DealProfile) -> str:
         "",
         f"| Term | Detail |",
         f"|------|--------|",
-        f"| Deal Type | {DEAL_TYPES.get(lt.deal_type, lt.deal_type)} |",
+        f"| Deal Type | {escape_cell(DEAL_TYPES.get(lt.deal_type, lt.deal_type))} |",
         f"| Loan Amount | ${lt.amount:,.0f} (${lt.amount_mm:.2f}MM) |",
         f"| Interest Rate | {rate_str} |",
     ]
@@ -25,9 +26,9 @@ def generate(deal: DealProfile) -> str:
     if lt.io_periods:
         lines.append(f"| Interest-Only Period | {lt.io_periods} months |")
     if lt.closing_date:
-        lines.append(f"| Anticipated Closing | {lt.closing_date} |")
+        lines.append(f"| Anticipated Closing | {escape_cell(lt.closing_date)} |")
     if lt.maturity_date:
-        lines.append(f"| Maturity Date | {lt.maturity_date} |")
+        lines.append(f"| Maturity Date | {escape_cell(lt.maturity_date)} |")
     if lt.origination_fee_pct:
         lines.append(
             f"| Origination Fee | {lt.origination_fee_pct*100:.2f}% "
@@ -88,9 +89,9 @@ def generate(deal: DealProfile) -> str:
             f"| Estimated Net Subsidy | ${nt.net_subsidy/1e6:.2f}MM |",
         ]
         if nt.cde_name:
-            lines.append(f"| CDE | {nt.cde_name} |")
+            lines.append(f"| CDE | {escape_cell(nt.cde_name)} |")
         if nt.investor_name:
-            lines.append(f"| Tax Credit Investor | {nt.investor_name} |")
+            lines.append(f"| Tax Credit Investor | {escape_cell(nt.investor_name)} |")
         lines.append("")
 
     return "\n".join(lines)

@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 from creditmemo.data.schema import (
     DealProfile, BorrowerProfile, LoanTerms,
@@ -118,3 +120,55 @@ def sample_deal(sample_borrower, sample_loan_terms,
         deal_summary="NCIF proposes a $2.5MM term loan to finance the acquisition "
                      "and renovation of a community health facility on Chicago's south side.",
     )
+
+
+@pytest.fixture
+def sample_nmtc_terms():
+    return NMTCTerms(
+        nmtc_allocation=10_000_000,
+        credit_price=0.83,
+        leverage_loan_rate=0.045,
+        qlici_a_rate=0.045,
+        qlici_b_rate=0.010,
+        cde_fee_rate=0.02,
+        cde_name="Chicago Development Fund",
+        investor_name="US Bancorp CDC",
+    )
+
+
+@pytest.fixture
+def sample_nmtc_deal(sample_deal, sample_nmtc_terms):
+    """
+    The same deal restructured as an NMTC investment, so the NMTC structure
+    table is covered by the .docx gates too.
+
+    Built on a deep copy. This fixture used to mutate ``sample_deal`` and hand
+    the same object back, and tests/test_docx.py's ``any_deal`` matrix requests
+    both fixtures — so both members of that matrix were the NMTC deal and the
+    "loan" parametrisation never once rendered a loan memo.
+    """
+    deal = copy.deepcopy(sample_deal)
+    deal.nmtc_terms = sample_nmtc_terms
+    deal.loan_terms.deal_type = "nmtc"
+    return deal
+
+
+def pytest_configure(config):
+    """
+    Fail loudly instead of silently skipping the .docx gates.
+
+    tests/test_docx.py uses importorskip, so a missing python-docx turns the
+    renderer gates into a green skip. CI sets CREDITMEMO_REQUIRE_DOCX=1 so that
+    can never happen there.
+    """
+    import os
+    if os.environ.get("CREDITMEMO_REQUIRE_DOCX") != "1":
+        return
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        raise pytest.UsageError(
+            "CREDITMEMO_REQUIRE_DOCX=1 is set but python-docx is not installed, "
+            "so the .docx gates would skip instead of running. "
+            'Install it with: pip install ".[docx]"'
+        )

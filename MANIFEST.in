@@ -1,0 +1,8 @@
+# The default sdist sweeps up tests/test_*.py but not conftest.py or
+# tests/__init__.py, which makes the sdist's test suite unrunnable. Be explicit.
+include README.md
+include CHANGELOG.md
+include LICENSE
+recursive-include tests *.py
+recursive-include scripts *.py
+include .github/workflows/*.yml
