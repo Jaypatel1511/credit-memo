@@ -90,6 +90,24 @@ def test_markdown_has_tables_to_lose(any_deal):
     assert sum(len(b) for b in blocks) > 0
 
 
+def test_the_deal_matrix_covers_two_different_deals(sample_deal, sample_nmtc_deal):
+    """
+    Guard the guard: `any_deal` claims to render a loan memo and an NMTC memo.
+
+    sample_nmtc_deal used to mutate sample_deal and hand the same object back,
+    and this module requests both fixtures — so both members of the matrix were
+    the NMTC deal, every any_deal gate ran it twice, and the plain loan memo,
+    the package's primary case, was never rendered to .docx at all.
+    """
+    assert sample_deal is not sample_nmtc_deal
+    assert sample_deal.loan_terms.deal_type == "loan"
+    assert sample_deal.nmtc_terms is None
+    assert sample_nmtc_deal.loan_terms.deal_type == "nmtc"
+    assert sample_nmtc_deal.nmtc_terms is not None
+    # And the two really do produce different memos.
+    assert _markdown_blocks(sample_deal) != _markdown_blocks(sample_nmtc_deal)
+
+
 def test_docx_row_count_conserves_markdown_rows(any_deal, tmp_path):
     """
     Total rows across the generated .docx tables, minus the hand-built header

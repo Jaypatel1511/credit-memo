@@ -89,7 +89,7 @@ source of truth, and a test asserts `creditmemo.__version__` matches it.
   the whole memo with) and row extraction (`content_rows`, the one definition
   of what counts as a table row, used by the gates and by the installed-wheel
   smoke check). One rule, one place, both sides.
-- Test suite grew from **29 tests (0.1.0) to 85 (0.2.0)**. The load-bearing
+- Test suite grew from **29 tests (0.1.0) to 86 (0.2.0)**. The load-bearing
   .docx gate is positional — table for table, row for row, cell for cell,
   against the Markdown the same deal produces — because counting alone cannot
   tell a correct memo from one with every value in the wrong cell. The header

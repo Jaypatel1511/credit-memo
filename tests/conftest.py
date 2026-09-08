@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 from creditmemo.data.schema import (
     DealProfile, BorrowerProfile, LoanTerms,
@@ -136,11 +138,19 @@ def sample_nmtc_terms():
 
 @pytest.fixture
 def sample_nmtc_deal(sample_deal, sample_nmtc_terms):
-    """The same deal structured as an NMTC investment, so the NMTC
-    structure table is covered by the .docx gates too."""
-    sample_deal.nmtc_terms = sample_nmtc_terms
-    sample_deal.loan_terms.deal_type = "nmtc"
-    return sample_deal
+    """
+    The same deal restructured as an NMTC investment, so the NMTC structure
+    table is covered by the .docx gates too.
+
+    Built on a deep copy. This fixture used to mutate ``sample_deal`` and hand
+    the same object back, and tests/test_docx.py's ``any_deal`` matrix requests
+    both fixtures — so both members of that matrix were the NMTC deal and the
+    "loan" parametrisation never once rendered a loan memo.
+    """
+    deal = copy.deepcopy(sample_deal)
+    deal.nmtc_terms = sample_nmtc_terms
+    deal.loan_terms.deal_type = "nmtc"
+    return deal
 
 
 def pytest_configure(config):
