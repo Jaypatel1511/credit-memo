@@ -1,5 +1,6 @@
 """Executive Summary section generator."""
 from creditmemo.data.schema import DealProfile, DEAL_TYPES, SECTORS
+from creditmemo.tables import escape_cell
 
 
 def generate(deal: DealProfile) -> str:
@@ -33,15 +34,15 @@ def generate(deal: DealProfile) -> str:
         "",
         f"| Item | Details |",
         f"|------|---------|",
-        f"| Borrower | {b.name} |",
-        f"| Borrower Type | {b.borrower_type.replace('_', ' ').title()} |",
-        f"| Sector | {SECTORS.get(b.sector, b.sector)} |",
-        f"| Location | {b.city}, {b.state} |",
-        f"| Deal Type | {DEAL_TYPES.get(lt.deal_type, lt.deal_type)} |",
+        f"| Borrower | {escape_cell(b.name)} |",
+        f"| Borrower Type | {escape_cell(b.borrower_type.replace('_', ' ').title())} |",
+        f"| Sector | {escape_cell(SECTORS.get(b.sector, b.sector))} |",
+        f"| Location | {escape_cell(b.city)}, {escape_cell(b.state)} |",
+        f"| Deal Type | {escape_cell(DEAL_TYPES.get(lt.deal_type, lt.deal_type))} |",
         f"| Amount | ${lt.amount_mm:.2f}MM |",
         f"| Interest Rate | {rate_str} |",
         f"| Term | {term_str} |",
-        f"| Use of Proceeds | {lt.use_of_proceeds or 'See Transaction Structure'} |",
+        f"| Use of Proceeds | {escape_cell(lt.use_of_proceeds or 'See Transaction Structure')} |",
         "",
     ]
 

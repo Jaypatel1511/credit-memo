@@ -1,5 +1,6 @@
 """Risk Assessment section generator."""
 from creditmemo.data.schema import DealProfile
+from creditmemo.tables import escape_cell
 
 
 def generate(deal: DealProfile) -> str:
@@ -28,7 +29,8 @@ def generate(deal: DealProfile) -> str:
 
         for risk in risks:
             lines.append(
-                f"| {risk.category} | {risk.description} | {risk.mitigant} |"
+                f"| {escape_cell(risk.category)} | {escape_cell(risk.description)} "
+                f"| {escape_cell(risk.mitigant)} |"
             )
         lines.append("")
 

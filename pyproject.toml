@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "credit-memo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generate IC credit memos from structured deal inputs — CDFI loans, NMTC deals, and impact investments"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,3 +18,7 @@ docx = ["python-docx>=0.8.11"]
 
 [project.urls]
 Homepage = "https://github.com/Jaypatel1511/credit-memo"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["creditmemo*"]
