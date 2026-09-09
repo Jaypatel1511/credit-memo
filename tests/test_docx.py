@@ -320,9 +320,37 @@ def test_save_docx_reports_the_path(sample_deal, tmp_path, capsys):
 # Word memo the package ever produced. Every gate in this module was written to
 # subtract `doc.tables[0]` and therefore measured around the duplicate.
 #
-# These normalisers are written here rather than imported from the renderer on
-# purpose: a gate that strips list markers with the renderer's own regex follows
-# that regex wherever it goes.
+# WHAT THESE GATES ARE, AND WHAT THEY ARE NOT (R8)
+#
+# These are DUPLICATION gates. They compare multisets, so they catch a piece of
+# content appearing more or fewer times than the Markdown says — which is what
+# 0.2.0's hand-built cover block did, and what they were built for.
+#
+# They are NOT the input-fidelity gate, and must not be relied on as one. The
+# normalisers below re-implement the renderer's own transformations: `_MD_NUMBER`
+# is character-for-character the `_ORDERED_ITEM` regex the renderer matched
+# with, and `_strip_emphasis` was the renderer's `.replace("*", "")`. So they
+# removed, on the Markdown side, exactly what the renderer destroyed on the Word
+# side, and both G1 variants stayed green while
+#
+#     2019. The borrower refinanced its senior debt at 4.2%.
+#
+# reached the Investment Committee as item 1. — and while a lone `*` was deleted
+# from every paragraph in the document.
+#
+#     RULE: a gate that re-implements the transformation it is checking shares
+#     its blind spot.
+#
+# Fidelity is gated in tests/test_input_fidelity.py by G11, which asserts against
+# the strings the caller put on the DealProfile and re-implements nothing. Both
+# of the renderer mutations named above redden G11 while leaving every gate in
+# this module green; that contrast is the reason G11 exists.
+#
+# The comment these lines replace claimed the normalisers were written here
+# "rather than imported from the renderer on purpose: a gate that strips list
+# markers with the renderer's own regex follows that regex wherever it goes."
+# That is true and it is not enough: copying the regex has the same blind spot
+# as importing it, one release later.
 _MD_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
 _MD_BULLET = re.compile(r"^[-*]\s+(.*)$")
 _MD_NUMBER = re.compile(r"^\d+\.\s+(.*)$")

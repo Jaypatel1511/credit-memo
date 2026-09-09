@@ -4,6 +4,7 @@ import re
 from creditmemo.data.schema import DealProfile
 from creditmemo.renderers.markdown import render as render_markdown
 from creditmemo.tables import block_to_rows, iter_segments
+from creditmemo.text import strip_emphasis
 
 #: Word style used for every generated table. "Table Grid" ships with the
 #: default python-docx template, so no external template is required. The
@@ -16,8 +17,59 @@ TABLE_STYLE = "Table Grid"
 BULLET_STYLE = "List Bullet"
 NUMBER_STYLE = "List Number"
 
-#: A Markdown ordered-list item: "1. Receipt of final appraisal".
+#: A line that has the shape of a Markdown ordered-list item:
+#: "1. Receipt of final appraisal". Shape alone does not make it one — see
+#: :func:`_ordered_item_lines`.
 _ORDERED_ITEM = re.compile(r"^(\d+)\.\s+(.*)$")
+
+
+def _ordered_item_lines(lines):
+    """
+    Decide, for each line with the shape of an ordered-list item, whether it
+    really is one. Returns those decisions in document order.
+
+    A line becomes a Word ``List Number`` item only if it belongs to a run of
+    ordered-item lines — separated by nothing but blank lines — whose numbers
+    are exactly 1, 2, 3, ... n. Anything else is emitted verbatim as body
+    text, with the number the underwriter wrote still in it.
+
+    Through 0.2.1 the renderer matched this shape against any line and emitted
+    only the text after the number, letting Word supply its own "1.". A
+    chronology written as::
+
+        2019. The borrower refinanced its senior debt at 4.2%.
+        2024. The borrower drew $1.2MM on the line.
+
+    reached the Investment Committee as items 1. and 2. — the only defect of
+    this class that both destroyed content and substituted a false value in
+    its place. It is silent: the file saves and reports success.
+
+    The rule fails toward preserving content. Its worst case is a genuine
+    ordered list that does not start at 1, or whose items are separated by
+    prose, losing its Word list styling and reading as ordinary paragraphs
+    with their numbers intact. No input loses a number the caller wrote.
+    Gated by G11.
+    """
+    decisions = []
+    run = []
+
+    def flush():
+        numbers = [n for n, _ in run]
+        ok = numbers == list(range(1, len(numbers) + 1))
+        for _, at in run:
+            decisions[at] = ok
+        run.clear()
+
+    for line in lines:
+        match = _ORDERED_ITEM.match(line)
+        if match:
+            run.append((int(match.group(1)), len(decisions)))
+            decisions.append(False)
+            continue
+        if line.strip():
+            flush()
+    flush()
+    return decisions
 
 
 def _clean(text: str) -> str:
@@ -28,8 +80,13 @@ def _clean(text: str) -> str:
     did this, so a bullet such as ``- **Total Assets:** $8.0MM`` reached Word as
     the literal characters ``**Total Assets:** $8.0MM`` — raw Markdown syntax,
     in the document handed to an Investment Committee.
+
+    The rule itself lives in :mod:`creditmemo.text`, shared with the table-cell
+    splitter. This branch used to delete every ``*`` while that one deleted
+    only ``**``, so ``5 * 3`` survived in a Word table cell and arrived in a
+    paragraph of the same document as ``5  3``.
     """
-    return text.replace("**", "").replace("*", "")
+    return strip_emphasis(text)
 
 #: The horizontal rule the Markdown renderer emits between sections. Matched
 #: exactly, not by prefix: ``startswith("---")`` also matched underwriter prose
@@ -116,13 +173,21 @@ def render(deal: DealProfile, path: str) -> None:
     doc = Document()
 
     md_content = render_markdown(deal)
+    lines = md_content.split("\n")
+
+    # Which ordered-item-shaped lines are really list items has to be decided
+    # over the whole document, not line by line, so it is decided up front. The
+    # decisions come back in document order, one per matching line; a table line
+    # begins with "|" and so can never match, which is why walking them off a
+    # single iterator stays in step with iter_segments below.
+    numbered = iter(_ordered_item_lines(lines))
 
     # iter_segments groups contiguous table lines into blocks and hands back
     # everything else line by line, in order. It is the same grouping the
     # conservation gates count with, so there is only one such rule in the
     # package.
     seen_title = False
-    for kind, payload in iter_segments(md_content.split("\n")):
+    for kind, payload in iter_segments(lines):
         if kind == "table":
             _add_table(doc, payload)
             continue
@@ -146,8 +211,13 @@ def render(deal: DealProfile, path: str) -> None:
         elif line.startswith("- ") or line.startswith("* "):
             doc.add_paragraph(_clean(line[2:]), style=BULLET_STYLE)
         elif _ORDERED_ITEM.match(line):
-            doc.add_paragraph(_clean(_ORDERED_ITEM.match(line).group(2)),
-                              style=NUMBER_STYLE)
+            if next(numbered):
+                doc.add_paragraph(_clean(_ORDERED_ITEM.match(line).group(2)),
+                                  style=NUMBER_STYLE)
+            else:
+                # Not a list item — a sentence that begins with a number the
+                # underwriter wrote. Emitted whole, number included.
+                doc.add_paragraph(_clean(line))
         elif line:
             clean = _clean(line)
             if clean.strip():

@@ -1,4 +1,5 @@
 """Executive Summary section generator."""
+from creditmemo import fields
 from creditmemo.data.schema import DealProfile, DEAL_TYPES, SECTORS
 from creditmemo.tables import escape_cell
 
@@ -6,8 +7,13 @@ from creditmemo.tables import escape_cell
 def generate(deal: DealProfile) -> str:
     b = deal.borrower
     lt = deal.loan_terms
-    rate_str = f"{lt.interest_rate*100:.2f}%" if lt.interest_rate else "N/A"
-    term_str = f"{lt.term_years} years" if lt.term_years else "N/A"
+    # `creditmemo.fields`, not a local f-string and not a truthiness test.
+    # Both fields are Optional, so a supplied 0 is a value the caller stated;
+    # and both are also shown by the Transaction Structure section, which
+    # formatted them separately and therefore printed "0 years" for a term
+    # this section called "N/A" on the same deal.
+    rate_str = fields.or_not_supplied(fields.rate(lt.interest_rate))
+    term_str = fields.or_not_supplied(fields.term(lt.term_years))
 
     lines = [
         "## Executive Summary",
@@ -46,7 +52,7 @@ def generate(deal: DealProfile) -> str:
         "",
     ]
 
-    if deal.deal_summary:
+    if fields.is_supplied(deal.deal_summary):
         lines += [deal.deal_summary, ""]
 
     return "\n".join(lines)

@@ -12,6 +12,8 @@ suite and ``scripts/smoke_installed_wheel.py`` count rows with.
 """
 from typing import Iterator, List, Optional, Sequence, Tuple
 
+from creditmemo.text import strip_emphasis
+
 __all__ = [
     "escape_cell",
     "unescape_cell",
@@ -63,8 +65,12 @@ def split_row(line: str) -> List[str]:
     Split one Markdown table row into its cell texts.
 
     Splits on unescaped ``|`` only, drops the leading/trailing delimiters, and
-    unescapes each cell. Markdown bold markers are stripped so table cells read
-    the same way the paragraph path renders them.
+    unescapes each cell. Emphasis markers are stripped through
+    :func:`creditmemo.text.strip_emphasis` — the same function the .docx
+    paragraph path uses, so a table cell and a paragraph of the same document
+    cannot disagree about whether a character is syntax or content. They did:
+    this side stripped only ``**`` while the paragraph side stripped every
+    ``*``, so a lone asterisk survived here and was deleted there.
     """
     stripped = line.strip()
     if stripped.startswith("|"):
@@ -92,7 +98,7 @@ def split_row(line: str) -> List[str]:
         i += 1
     cells.append("".join(buf))
 
-    return [unescape_cell(c).replace("**", "").strip() for c in cells]
+    return [strip_emphasis(unescape_cell(c)).strip() for c in cells]
 
 
 def is_table_line(line: str) -> bool:

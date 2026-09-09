@@ -1,4 +1,5 @@
 """Impact Analysis section generator."""
+from creditmemo import fields
 from creditmemo.data.schema import DealProfile
 
 #: (attribute, affirmative, negative) for the tri-state eligibility flags, in
@@ -72,11 +73,11 @@ def generate(deal: DealProfile) -> str:
     lines.append("")
     lines += _target_market_lines(imp)
 
-    if imp.census_tract:
+    if fields.is_supplied(imp.census_tract):
         lines.append(f"**Census Tract:** {imp.census_tract}")
         lines.append("")
 
-    if imp.impact_narrative:
+    if fields.is_supplied(imp.impact_narrative):
         lines += ["### Impact Narrative", "", imp.impact_narrative, ""]
 
     return "\n".join(lines)

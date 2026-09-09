@@ -8,8 +8,9 @@ This project follows [Semantic Versioning](https://semver.org/).
 Everything in this entry was measured on the code in this repository with the
 README quickstart deal, on Python 3.12 with python-docx 1.2.0, and the suite was
 re-run on 3.9, 3.10, 3.11, 3.12, 3.13 and 3.14. The suite goes from **86 tests
-to 150**. Every gate below was watched to fail against a deliberate mutation
-before being trusted; the mutations are recorded in the gates' own docstrings.
+to 270**. Every gate below was watched to fail against a deliberate mutation
+before being trusted; the mutations are recorded in the gates' own docstrings,
+with the count that reddened.
 
 ### Fixed
 
@@ -36,7 +37,9 @@ suite measured *around* the duplicate rather than at it.
 The hand-built block is gone. The .docx is now a pure function of the Markdown:
 the first `#` heading takes Word's `Title` style, and nothing is emitted that
 has no Markdown line behind it. The same deal now produces **6 tables / 36 rows
-/ 93 cells**, and 22 headings with none duplicated.
+/ 93 cells**, and **23 headings** with none duplicated — 23 rather than the 22
+the 0.2.0 Markdown had, because 0.2.1 adds the `### Certifications &
+Designations` heading described three paragraphs below.
 
 **The .docx's entire non-table half was ungated.** Deleting the title, every
 heading, every narrative paragraph, every bullet and every rule from the
@@ -56,6 +59,22 @@ branch stripped Markdown emphasis, so `- **Total Assets:** $8.0MM` reached the
 Word document as the characters `**Total Assets:** $8.0MM` — raw Markdown
 syntax in the file handed to an Investment Committee. Every text branch now
 strips emphasis.
+
+**A lone `*` was deleted from prose and kept in table cells.** The .docx
+paragraph path stripped every `*` unconditionally; the table-cell splitter
+stripped only `**`. The same character therefore survived in a Word table cell
+and vanished from a paragraph of the same document:
+
+    markdown : 'EBITDA margin improved 5 * 3 basis points.'
+    docx     : 'EBITDA margin improved 5  3 basis points.'
+
+A lone asterisk in underwriter prose is content — multiplication, a footnote
+mark, a redaction — and deleting it changes the number the Investment Committee
+reads. Both paths now go through one helper, `creditmemo.text.strip_emphasis`,
+which removes only markers that pair (under CommonMark's flanking rule, so
+`5 * 3` and `5 ** 3` are arithmetic) and leaves an unpaired `*` alone. Where the
+pairing is ambiguous it preserves the characters rather than guessing: the worst
+case is a literal `*` in the Word file, not a missing digit.
 
 **Underwriter prose beginning with `|` was silently turned into a table.** A
 leading pipe alone made a line a table row, so
@@ -80,8 +99,42 @@ figures were tested for truthiness. Two consequences, both silent:
 - a supplied `0` — no cash on hand, no net income, a fully depreciated asset
   base — was indistinguishable from a field nobody filled in
 
-Every `Optional` figure in the Borrower Profile, Transaction Structure and
-Financial Analysis sections is now tested with `is not None`.
+Every `Optional` field on every dataclass is now consulted through
+`creditmemo.fields.is_supplied`, or with a literal `is not None`, and never for
+truthiness. `is_supplied` treats a supplied `0`, `0.0` or `False` as the
+statement it is; the single exception it makes is `Optional[str]`, where the
+falsy value is `""`, which states nothing and whose rendering would be a section
+heading over an empty body. That exception is a behaviour, gated by
+`test_g9_the_optional_string_rule_is_stated`, rather than an accident of which
+sites were visited.
+
+**Three of those sites were still truthiness tests when the entry above was
+first written**, and the sentence claiming otherwise shipped ahead of the fix:
+
+- `interest_rate` and `term_years` in the Executive Summary, and `interest_rate`
+  in the Transaction Structure. With `interest_rate=0.0, term_years=0` the memo
+  read `| Interest Rate | N/A |` and `| Term | N/A |` in the Executive Summary
+  while the Transaction Structure, four lines further down the same document,
+  read `| Loan Term | 0 years |`. A 0% forgivable loan, an EQ2 note and a 0%
+  QLICI B tranche are routine instruments for this package's callers, and "N/A"
+  tells an Investment Committee the rate is unknown when the caller stated it is
+  zero. Both fields now render through one shared formatter, so the two sections
+  cannot disagree again.
+- `FinancialData.revenue_trend` was gated on
+  `if self.revenue_y1 and self.revenue_y3`. Revenue falling from $5MM to zero is
+  the most alarming thing that field can express, and it was the one case the
+  memo would not report; so was a recovery from zero. Now `is not None`.
+  Its `decreasing` and `stable` branches also had no test coverage at all — the
+  memo's only automated analytical claim had both of its adverse branches
+  ungated. All three are gated now.
+
+**The Financial Projections DSCR row gated all three years on
+`projected_dscr_y1`.** `FinancialData(projected_dscr_y2=1.42)` rendered the
+`### Financial Projections` heading and a table with nothing in it but the
+header row; the one figure supplied appeared nowhere in the memo. This is the
+`has_balance`/`cash` defect above, still live in the block next door, and it was
+found by a gate's coverage check rather than by reading. The row is now gated on
+any of the three years.
 
 **`RiskFactor.severity` accepted anything and rendered only three spellings.**
 The Risk Assessment section groups by exact match on `"High"`, `"Medium"`,
@@ -182,6 +235,49 @@ not follow the page margins, and lands in every copy-paste of the memo.
 **One amount format.** The Deal Summary table showed `$2.50MM` where Proposed
 Terms showed `$2,500,000 ($2.50MM)`. Both now show the full form.
 
+### Added
+
+- `creditmemo/text.py` — the one rule for what is a Markdown emphasis marker and
+  what is content, shared by the .docx paragraph path and the table-cell
+  splitter, which had two different answers.
+- `creditmemo/fields.py` — the one answer to "did the caller supply this?" and
+  the one formatter for `interest_rate` and `term_years`, which two sections
+  formatted separately and disagreed about.
+- **G11, the input-fidelity gate** (`tests/test_input_fidelity.py`). It asserts
+  that every free-text string a caller puts on a `DealProfile` appears, intact
+  and as many times, in both renderings — comparing against the strings on the
+  deal, never against a re-parse or re-normalisation of the generated Markdown.
+
+  This exists because the .docx gates did the opposite. `tests/test_docx.py`
+  normalised the Markdown with `_MD_NUMBER = r"^\d+\.\s+(.*)$"` — character
+  for character the renderer's own `_ORDERED_ITEM` — and with a
+  `_strip_emphasis` that replicated the renderer's `.replace("*", "")`. They
+  removed, on the Markdown side, exactly what the renderer destroyed on the Word
+  side, so both G1 variants stayed green while content was being deleted.
+
+  > **A gate that re-implements the transformation it is checking shares its
+  > blind spot.** For a rendering-fidelity gate the only safe ground truth is
+  > the string the caller supplied.
+
+  Restoring either renderer defect reddens G11 — 7 tests for the ordered-item
+  one, 26 for the asterisk one — and leaves every gate in `tests/test_docx.py`
+  green. Those gates keep their job, which is duplication; they are no longer
+  the fidelity gate, and their module now says so.
+- **G9** — every `Optional` field: a supplied `0`/`0.0` renders as the value in
+  every section that shows it, never as `N/A` and never as an omitted row. Its
+  coverage check enumerates the schema, so a new `Optional` field cannot be
+  added without a decision recorded against it.
+- **G10** — `revenue_trend` returns a direction for every supplied pair
+  including zeros, all three branches execute, and the property is checked not
+  to divide by either endpoint.
+- **G8 addendum** — each rendered flag negative is pinned to that flag's
+  declared constant, and each constant to a literal in the test file, so the
+  fourteen strings become a reviewed surface and any change to one shows as a
+  diff. The gate's docstring states the residual limit in plain words: no gate
+  can decide whether a declared negative actually negates its affirmative.
+  `- ❌ No longer relevant: CDFI Certified` still passes. That class is
+  narrowed, not closed.
+
 ### Removed
 
 **`pandas` is no longer a runtime dependency.** 0.1.0 and 0.2.0 declared
@@ -189,7 +285,15 @@ Terms showed `$2,500,000 ($2.50MM)`. Both now show the full form.
 outside the standard library — so every install pulled pandas and numpy, and
 inherited their platform and Python-version constraints, to build strings. Two
 gates hold this: one checks every declared dependency is actually imported, the
-other renders a full memo in a subprocess with third-party imports blocked.
+other renders a full memo in a subprocess with third-party imports blocked. The
+second used to block a hardcoded `("pandas", "numpy", "docx")` — so `import
+pytest` in a shipped module passed both — and now derives the blocked set from
+the distributions installed in that subprocess's own environment. That also
+makes its red-proof reproducible here: the old one was "add `import pandas`",
+and pandas is not installed, so it produced a conftest `ImportError` and zero
+tests run rather than one failure. The first gate is vacuous by design with
+`dependencies = []`, and now carries the would-pass-vacuously guard the rest of
+the suite has.
 `python-docx` remains, under the optional `[docx]` extra.
 
 **`creditmemo.renderers.docx.header_rows_data` is gone**, with the hand-built
@@ -206,15 +310,57 @@ instead.
   `Year -2`** — oldest-first — and nothing in the memo or the field names says
   so. The stated `Revenue Trend` conclusion depends on it. Documenting or
   renaming this is a breaking change to the input contract.
-- **Prose beginning with `# ` or `- ` is still restyled** as a heading or a
-  bullet in the .docx. Unlike the `|` and `---` cases, neither loses or
-  relocates content, and matching them exactly is not possible the way it is
-  for a rule. A structured intermediate representation would end the whole
-  class; that is not a patch.
-- **Non-`Optional` counters still treat `0` as absent** — `affordable_units`,
-  `patients_served` and the other `int = 0` fields on `ImpactData`. They cannot
-  distinguish a supplied zero from a default without the same
-  `Optional` change made to the seven flags.
+- **Prose beginning with `# `, `- `, `* ` or `1. ` is still restyled** as a
+  heading, a bullet or a numbered item in the .docx. Each of those replaces a
+  Markdown marker with the Word equivalent of the same marker, so the reader
+  sees the structure the caller wrote; matching them exactly is not possible the
+  way it is for a rule.
+
+  An earlier version of this entry named only `# ` and `- ` and said "neither
+  loses or relocates content". That was true of those two and **false of the
+  third case it omitted**: a line beginning with any *other* number —
+  `2019. The borrower refinanced its senior debt at 4.2%.` — matched the same
+  ordered-item pattern, and the renderer emitted only the text after the number
+  and let Word supply its own `1.`. A chronology written as 2019/2024 reached
+  the Investment Committee as 1./2. That is the only defect in this class that
+  both destroyed content and substituted a false value in its place, and it is
+  **fixed**, not deferred: a line becomes a Word `List Number` item only if it
+  belongs to a contiguous run starting at 1 and incrementing by 1, and anything
+  else is emitted verbatim with its number intact. The rule fails toward
+  preserving content — its worst case is a genuine list losing its Word styling.
+
+  A structured intermediate representation — building the .docx from the
+  `DealProfile` rather than by re-parsing Markdown — would end the whole class.
+  That is a redesign, not a patch.
+- **Non-`Optional` counters still treat `0` as absent.** On `ImpactData`:
+  `affordable_units`, `sq_ft_community_space`, `patients_served`,
+  `students_served` and `businesses_supported`. On `LoanTerms`: `io_periods`
+  (`int = 0`) and `origination_fee_pct` (`float = 0.0`), which the entry
+  naming only `ImpactData` left out. None of them is `Optional`, so suppressing
+  the row on `0` is defensible — the caller genuinely cannot say "I checked, and
+  it is zero" — but the price is that they cannot distinguish a supplied zero
+  from a default without the same `Optional` change made to the seven flags.
+- **Four `NMTCTerms` inputs never reach the memo.** `leverage_loan_rate`,
+  `qlici_a_rate` and `qlici_b_rate` are *required* positional arguments — a
+  caller cannot construct `NMTCTerms` without supplying all three — and
+  `compliance_years` defaults to 7. None of the four appears anywhere in the
+  rendered memo, in either format. The NMTC Structure table shows the QEI, the
+  credits, the credit price, the investor equity, the CDE fee and the net
+  subsidy, and stops. For an NMTC deal the QLICI A and B rates and the
+  seven-year compliance period are core structural terms, and this is the same
+  class as everything above: caller-supplied input that vanishes, silently.
+  Adding rows changes the .docx table shape and belongs with the audit that
+  covers it, not with this fix.
+- **`FinancialData.ltv` and `LoanTerms.max_ltv` are on opposite scales.**
+  `max_ltv` is a fraction — `transaction.py` renders `max_ltv*100` as
+  `Maximum LTV of 75%` — as are `interest_rate`, `cde_fee_rate` and
+  `origination_fee_pct`. `FinancialData.ltv` is rendered as though it were
+  already a percentage, so a caller who follows the package's own convention and
+  passes `ltv=0.75` gets `| Loan to Value | 0.8% | <= 80% |`: a 75% LTV reported
+  to an Investment Committee as 0.8%, against an 80% benchmark, on the same deal
+  whose covenant line says 75%. Nothing in the field names or the memo says which
+  scale is meant. Picking one is a breaking change to the input contract, the
+  same reason the `Year -2` mapping above is deferred rather than fixed.
 
 ## [0.2.0] — 2026-09-08
 

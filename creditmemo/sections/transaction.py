@@ -1,11 +1,13 @@
 """Transaction Structure section generator."""
+from creditmemo import fields
 from creditmemo.data.schema import DealProfile, DEAL_TYPES
 from creditmemo.tables import escape_cell
 
 
 def generate(deal: DealProfile) -> str:
     lt = deal.loan_terms
-    rate_str = f"{lt.interest_rate*100:.2f}%" if lt.interest_rate else "N/A"
+    # One formatter, shared with the Executive Summary. See executive.py.
+    rate_str = fields.or_not_supplied(fields.rate(lt.interest_rate))
 
     lines = [
         "## Transaction Structure",
@@ -20,9 +22,9 @@ def generate(deal: DealProfile) -> str:
     ]
 
     if lt.term_years is not None:
-        lines.append(f"| Loan Term | {lt.term_years} years |")
+        lines.append(f"| Loan Term | {fields.term(lt.term_years)} |")
     if lt.amortization_years is not None:
-        lines.append(f"| Amortization | {lt.amortization_years} years |")
+        lines.append(f"| Amortization | {fields.term(lt.amortization_years)} |")
     if lt.io_periods:
         lines.append(f"| Interest-Only Period | {lt.io_periods} months |")
     if lt.closing_date is not None:
@@ -37,7 +39,7 @@ def generate(deal: DealProfile) -> str:
 
     lines.append("")
 
-    if lt.use_of_proceeds:
+    if fields.is_supplied(lt.use_of_proceeds):
         lines += [
             "### Use of Proceeds",
             "",
@@ -45,7 +47,7 @@ def generate(deal: DealProfile) -> str:
             "",
         ]
 
-    if lt.collateral:
+    if fields.is_supplied(lt.collateral):
         lines += [
             "### Collateral",
             "",
@@ -53,7 +55,7 @@ def generate(deal: DealProfile) -> str:
             "",
         ]
 
-    if lt.guarantor:
+    if fields.is_supplied(lt.guarantor):
         lines += [
             "### Guaranty",
             "",
@@ -74,7 +76,7 @@ def generate(deal: DealProfile) -> str:
         lines.append("")
 
     # NMTC structure
-    if deal.nmtc_terms:
+    if deal.nmtc_terms is not None:
         nt = deal.nmtc_terms
         lines += [
             "### NMTC Structure",
@@ -88,9 +90,9 @@ def generate(deal: DealProfile) -> str:
             f"| CDE Fee | {nt.cde_fee_rate*100:.1f}% |",
             f"| Estimated Net Subsidy | ${nt.net_subsidy/1e6:.2f}MM |",
         ]
-        if nt.cde_name:
+        if fields.is_supplied(nt.cde_name):
             lines.append(f"| CDE | {escape_cell(nt.cde_name)} |")
-        if nt.investor_name:
+        if fields.is_supplied(nt.investor_name):
             lines.append(f"| Tax Credit Investor | {escape_cell(nt.investor_name)} |")
         lines.append("")
 

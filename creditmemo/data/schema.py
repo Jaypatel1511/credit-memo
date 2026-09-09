@@ -174,7 +174,19 @@ class FinancialData:
 
     @property
     def revenue_trend(self) -> Optional[str]:
-        if self.revenue_y1 and self.revenue_y3:
+        """
+        The direction of revenue over the historical period, or ``None`` if
+        either endpoint was not supplied.
+
+        ``is not None``, not truthiness. Through 0.2.1 this was gated on
+        ``if self.revenue_y1 and self.revenue_y3``, so revenue collapsing
+        from $5MM to zero — the most alarming thing this field can express —
+        was the one case the memo would not report, and a recovery from zero
+        was the other. Both branches below are bare comparisons of the two
+        endpoints; nothing divides by either, so no zero needs guarding for
+        any reason but this one. Gated by G10.
+        """
+        if self.revenue_y1 is not None and self.revenue_y3 is not None:
             if self.revenue_y3 > self.revenue_y1:
                 return "increasing"
             elif self.revenue_y3 < self.revenue_y1:

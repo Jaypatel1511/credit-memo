@@ -1,12 +1,14 @@
 """Borrower Profile section generator."""
+from creditmemo import fields
 from creditmemo.data.schema import DealProfile, BORROWER_TYPES, SECTORS
 
 #: (attribute, affirmative, negative) for the tri-state certification flags, in
 #: field order. Each flag carries its own negative string rather than borrowing
-#: the affirmative one under a negating header: a header does not reach the run
-#: the label sits in, so "**Not certified:** CDFI Certified" contradicted itself
-#: on the page and read as "CDFI Certified" to anyone skimming the bold runs of
-#: the Word document. Same shape as impact.TARGET_MARKET_FLAGS.
+#: the affirmative one under a negating header: "**Not certified:** CDFI
+#: Certified" is a line that contradicts itself, and it reaches the Word
+#: document as the sentence "Not certified: CDFI Certified" — the emphasis
+#: markers are flattened on the way, so it is one plain run, not a bold one a
+#: reader could skim past. Same shape as impact.TARGET_MARKET_FLAGS.
 CERTIFICATION_FLAGS = (
     ("is_cdfi_certified", "CDFI Certified",       "Not CDFI certified"),
     ("is_mdi",            "Minority Depository Institution (MDI)",
@@ -57,9 +59,9 @@ def generate(deal: DealProfile) -> str:
 
     if b.year_founded is not None:
         lines.append(f"**Year Founded:** {b.year_founded}")
-    if b.ceo_name:
+    if fields.is_supplied(b.ceo_name):
         lines.append(f"**CEO/Executive Director:** {b.ceo_name}")
-    if b.website:
+    if fields.is_supplied(b.website):
         lines.append(f"**Website:** {b.website}")
 
     lines.append("")
@@ -67,10 +69,10 @@ def generate(deal: DealProfile) -> str:
     lines.append("")
     lines += _certification_lines(b)
 
-    if b.mission:
+    if fields.is_supplied(b.mission):
         lines += ["### Mission", "", b.mission, ""]
 
-    if b.description:
+    if fields.is_supplied(b.description):
         lines += ["### Organization Description", "", b.description, ""]
 
     # `is not None`, not truthiness: a borrower with total assets of exactly $0

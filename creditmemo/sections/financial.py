@@ -38,7 +38,7 @@ def generate(deal: DealProfile) -> str:
         "",
     ]
 
-    if f.revenue_trend:
+    if f.revenue_trend is not None:
         lines.append(
             f"**Revenue Trend:** {f.revenue_trend.title()} — "
             f"revenue has been {f.revenue_trend} over the historical period."
@@ -91,7 +91,14 @@ def generate(deal: DealProfile) -> str:
             lines.append(
                 f"| Revenue | {_fmt(f.projected_revenue_y1)} | — | — |"
             )
-        if f.projected_dscr_y1 is not None:
+        # Any of the three years, not just Year 1. Gating all three on
+        # `projected_dscr_y1` is the `has_balance`/`cash` defect of 0.2.0 in
+        # the block next door: `FinancialData(projected_dscr_y2=1.42)`
+        # rendered the heading and a header-only table, and the one figure
+        # supplied appeared nowhere in the memo.
+        if any(v is not None for v in (f.projected_dscr_y1,
+                                       f.projected_dscr_y2,
+                                       f.projected_dscr_y3)):
             lines.append(
                 f"| DSCR | {_fmt_ratio(f.projected_dscr_y1)} | "
                 f"{_fmt_ratio(f.projected_dscr_y2)} | "

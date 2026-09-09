@@ -149,9 +149,18 @@ field alone says nothing at all. Before 0.2.1 these were plain booleans
 defaulting to `False`, so the two were the same value and both rendered as
 silence.
 
-The same principle applies to figures: every optional financial field is tested
-for `None`, not for truthiness, so a supplied `0` — no cash on hand, no net
-income — is rendered as `$0.00MM` rather than discarded.
+The same principle applies to figures. Every `Optional` field is consulted with
+`is not None` — never for truthiness — so a supplied `0` is rendered as the
+number the caller stated: no cash on hand as `$0.00MM`, a 0% forgivable loan or
+QLICI B tranche as `0.00%`, and a revenue collapse from $5MM to zero as
+`Revenue Trend: Decreasing` rather than as no line at all. A field a caller
+never filled in is `None`, and only that renders as `N/A`.
+
+The one exception is `Optional[str]`, where the falsy value is the empty string.
+`""` states nothing, and the fields that hold one — a mission, a collateral
+description, an impact narrative — each render as a section heading with the
+string beneath it, so an empty string is treated as absence rather than
+producing a heading over an empty body.
 
 And a deal with no `risks` says so as a fact about its inputs. It does not
 claim the deal has no risks; the package has no way to know that.
