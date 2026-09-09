@@ -204,6 +204,42 @@ behave this way.
 
     deal = DealProfile(..., nmtc_terms=nmtc, ...)
 
+All rates above are **fractions, not percentage points** — 4.5% is `0.045`. So
+is `LoanTerms.max_ltv`. The one exception in the package is
+`FinancialData.ltv`, which is in percentage points (a 75% LTV is `75.0`); it
+raises if you pass it a fraction rather than render a false number. Unifying
+the two scales is the second item for 0.3.0.
+
+### Known limitation: four NMTC inputs do not reach the memo
+
+**As of 0.2.1, `leverage_loan_rate`, `qlici_a_rate`, `qlici_b_rate` and
+`compliance_years` appear nowhere in the generated memo** — not in the
+Markdown, not in the Word document. The first three are *required* arguments:
+you cannot construct `NMTCTerms` without supplying them, and the package then
+discards them silently.
+
+Measured by perturbing each field on `NMTCTerms` one at a time and diffing both
+renderings. Of the nine inputs:
+
+| Input | Reaches the memo? |
+|-------|-------------------|
+| `nmtc_allocation` | yes — *QEI (NMTC Allocation)*, and the three derived figures |
+| `credit_price` | yes — *Credit Price*, and *Investor Equity* |
+| `cde_fee_rate` | yes — *CDE Fee*, and *Estimated Net Subsidy* |
+| `cde_name` | yes — *CDE* |
+| `investor_name` | yes — *Tax Credit Investor* |
+| `leverage_loan_rate` | **no** (required argument) |
+| `qlici_a_rate` | **no** (required argument) |
+| `qlici_b_rate` | **no** (required argument) |
+| `compliance_years` | **no** (defaults to 7) |
+
+For an NMTC deal the QLICI A and B rates and the seven-year compliance period
+are core structural terms. **If you are using this package for an NMTC
+transaction, add them to your memo by hand until this is fixed.** Adding rows
+changes the .docx table shape and needs the gate coverage that goes with it,
+which is why 0.2.1 discloses it rather than patching it. **This is the top item
+for 0.3.0.**
+
 ---
 
 ## Running Tests

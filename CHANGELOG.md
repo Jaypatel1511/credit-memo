@@ -8,7 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 Everything in this entry was measured on the code in this repository with the
 README quickstart deal, on Python 3.12 with python-docx 1.2.0, and the suite was
 re-run on 3.9, 3.10, 3.11, 3.12, 3.13 and 3.14. The suite goes from **86 tests
-to 270**. Every gate below was watched to fail against a deliberate mutation
+to 284**. Every gate below was watched to fail against a deliberate mutation
 before being trusted; the mutations are recorded in the gates' own docstrings,
 with the count that reddened.
 
@@ -154,6 +154,47 @@ lowercase-keyed dicts, so `"Nonprofit"` raised while `"nonprofit"` passed;
 `severity` was not validated at all. All five now match case-insensitively
 through one shared normaliser. This is strictly wider than the old behaviour:
 nothing accepted before is rejected now.
+
+**A fractional `ltv` produced two different percentages for one number, in one
+memo.** `LoanTerms.max_ltv` is a fraction — `transaction.py` renders
+`max_ltv*100` — as are `interest_rate`, `cde_fee_rate` and
+`origination_fee_pct`. `FinancialData.ltv` alone is rendered unscaled, and
+nothing said so: not the declaration, not `README.md`. A caller who followed
+the package's own dominant convention and passed `0.75` to both fields got
+
+    - Maximum LTV of 75%              <- Transaction Structure
+    | Loan to Value | 0.8% | <= 80% | <- Financial Analysis
+
+on one deal, in **both** the Markdown and the Word document — a 75% LTV
+reaching an Investment Committee as 0.8% against an 80% benchmark, reading as
+extraordinarily overcollateralised.
+
+`FinancialData.ltv` now raises `ValueError` for a value in `(0.0, 1.0]`, in the
+shape `borrower_type`'s error already uses:
+
+    ltv must be in percentage points, not a fraction: got 0.75, which renders
+    as 0.8%. A 75% LTV is ltv=75.0. (LoanTerms.max_ltv is the fraction; the two
+    fields are on opposite scales until they are unified in 0.3.0.)
+
+No value is auto-interpreted. A rule like "`<= 1.0` means a fraction" would be
+a silent guess and a 100% LTV is real; guessing is the class of defect this
+release closes. The band is chosen so that it **rejects nothing legitimate**:
+`max_ltv` is a covenant cap written as a fraction, so `[0.0, 1.0]` is the range
+a caller might send to both fields, and read as percentage points anything in
+it but zero claims an LTV of one percent or less — under a cent of debt per
+dollar of collateral. `0.0` is exempt: it is the single value the two
+conventions render identically, and a supplied zero must still reach the memo.
+A deliberately looser threshold — "no real loan is below a few percent" —
+was rejected because it would refuse a genuine 1–5% LTV, such as a nearly
+repaid loan against appreciated collateral, with no way to express it.
+
+The unit is now documented on `ltv` and on every sibling that has one:
+`interest_rate`, `max_ltv`, `origination_fee_pct`, `min_dscr_covenant`, `dscr`,
+`current_ratio`, `debt_to_equity`, the three projected DSCRs, `credit_price`,
+`leverage_loan_rate`, `qlici_a_rate`, `qlici_b_rate` and `cde_fee_rate`. An
+undocumented unit is what produced this, so G12 gates the documentation as well
+as the validation, and a second gate checks that list against the schema so it
+cannot drift.
 
 ### Changed
 
@@ -340,27 +381,62 @@ instead.
   the row on `0` is defensible — the caller genuinely cannot say "I checked, and
   it is zero" — but the price is that they cannot distinguish a supplied zero
   from a default without the same `Optional` change made to the seven flags.
-- **Four `NMTCTerms` inputs never reach the memo.** `leverage_loan_rate`,
-  `qlici_a_rate` and `qlici_b_rate` are *required* positional arguments — a
-  caller cannot construct `NMTCTerms` without supplying all three — and
-  `compliance_years` defaults to 7. None of the four appears anywhere in the
-  rendered memo, in either format. The NMTC Structure table shows the QEI, the
-  credits, the credit price, the investor equity, the CDE fee and the net
-  subsidy, and stops. For an NMTC deal the QLICI A and B rates and the
-  seven-year compliance period are core structural terms, and this is the same
-  class as everything above: caller-supplied input that vanishes, silently.
-  Adding rows changes the .docx table shape and belongs with the audit that
-  covers it, not with this fix.
-- **`FinancialData.ltv` and `LoanTerms.max_ltv` are on opposite scales.**
-  `max_ltv` is a fraction — `transaction.py` renders `max_ltv*100` as
-  `Maximum LTV of 75%` — as are `interest_rate`, `cde_fee_rate` and
-  `origination_fee_pct`. `FinancialData.ltv` is rendered as though it were
-  already a percentage, so a caller who follows the package's own convention and
-  passes `ltv=0.75` gets `| Loan to Value | 0.8% | <= 80% |`: a 75% LTV reported
-  to an Investment Committee as 0.8%, against an 80% benchmark, on the same deal
-  whose covenant line says 75%. Nothing in the field names or the memo says which
-  scale is meant. Picking one is a breaking change to the input contract, the
-  same reason the `Year -2` mapping above is deferred rather than fixed.
+- **Four `NMTCTerms` inputs never reach the memo. This is the top item for
+  0.3.0, and it is disclosed in README.md as well as here** — someone deciding
+  whether to use this package for an NMTC deal should see it before they rely
+  on it, not after.
+
+  Measured, not counted by eye: each of the nine `NMTCTerms` inputs was
+  perturbed one at a time and both renderings diffed. Substring searching gives
+  false positives here — `0.0317` formatted to zero decimals is `0`, which
+  occurs throughout the memo — so the diff is the instrument.
+
+  | Input | Reaches Markdown | Reaches .docx |
+  |-------|------------------|---------------|
+  | `nmtc_allocation` | yes | yes |
+  | `credit_price` | yes | yes |
+  | `cde_fee_rate` | yes | yes |
+  | `cde_name` | yes | yes |
+  | `investor_name` | yes | yes |
+  | `leverage_loan_rate` | **no** | **no** |
+  | `qlici_a_rate` | **no** | **no** |
+  | `qlici_b_rate` | **no** | **no** |
+  | `compliance_years` | **no** | **no** |
+
+  `leverage_loan_rate`, `qlici_a_rate` and `qlici_b_rate` are *required*
+  positional arguments — a caller cannot construct `NMTCTerms` without
+  supplying all three — and `compliance_years` defaults to 7. The NMTC
+  Structure table shows the QEI, the credits, the credit price, the investor
+  equity, the CDE fee and the net subsidy, and stops. For an NMTC deal the
+  QLICI A and B rates and the seven-year compliance period are core structural
+  terms, and this is the same class as everything above: caller-supplied input
+  that vanishes, silently. Requiring an input is an implicit promise that it
+  matters.
+
+  It ships disclosed rather than fixed because adding rows changes the .docx
+  table shape and belongs with the audit that covers it. An omission is at
+  least visible to a reader in a way a false number is not — which is the
+  distinction that sends the `ltv` scale out fixed and this one documented.
+- **`FinancialData.ltv` and `LoanTerms.max_ltv` are still on opposite scales.**
+  0.2.1 makes the ambiguity loud rather than silent (see *A fractional `ltv`
+  now raises* above), but it does not unify them: `max_ltv` remains a fraction
+  and `ltv` remains percentage points. A caller still has to hold two
+  conventions in their head for two fields with almost the same name. Unifying
+  them is a breaking change to the input contract — the same reason the
+  `Year -2` mapping above is deferred — and is the second item for 0.3.0.
+- **`max_ltv` is not validated in the other direction.** The refusal added in
+  0.2.1 is on `FinancialData.ltv` only. A caller who makes the mirror-image
+  mistake and passes `max_ltv=75.0`, meaning 75%, gets
+  `Maximum LTV of 7500%` — measured. It is louder than a 0.8% LTV and far less
+  likely to be believed, which is why it is disclosed rather than fixed here,
+  but it is the same family and the scale unification closes both.
+- **The `ltv` refusal cannot catch a fraction above par.** `ltv=1.15`, meant as
+  a 115% LTV on an underwater loan, is outside the refused band and still
+  renders as `1.2%`. Closing that needs the scale unification, not a wider
+  band: widening it to cover 1.15 would start rejecting real low-LTV positions
+  (a nearly repaid loan against appreciated collateral) with no way to express
+  them. The residual requires both the fraction convention *and* an LTV over
+  100%, in a memo whose benchmark line reads `<= 80%`.
 
 ## [0.2.0] — 2026-09-08
 

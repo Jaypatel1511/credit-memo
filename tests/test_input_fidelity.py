@@ -1198,6 +1198,259 @@ def test_g11_is_not_vacuous():
     assert all(v in md for v in values.values())
 
 
+# ── G12 — the two LTV fields never disagree about one supplied number ────────
+#
+# R14. `LoanTerms.max_ltv` is a fraction: transaction.py renders `max_ltv*100`,
+# so `0.75` prints `Maximum LTV of 75%`. That is the package's dominant
+# convention — `interest_rate`, `cde_fee_rate` and `origination_fee_pct` are
+# all fractions. `FinancialData.ltv` is the sole exception: financial.py
+# renders it with no scaling, so it means percentage *points*. Neither field
+# said so anywhere — not on the declaration, not in README.md.
+#
+# Measured at 6ebcc6c with `ltv=0.75, max_ltv=0.75` on one deal:
+#
+#     - Maximum LTV of 75%              <- Transaction Structure
+#     | Loan to Value | 0.8% | <= 80% | <- Financial Analysis
+#
+# The same supplied number, rendered as two different percentages in one memo,
+# in both the Markdown and the .docx. A 75% LTV reaches the Investment
+# Committee as 0.8% against a `<= 80%` benchmark.
+#
+# 0.2.1 does not unify the scales — that is a breaking change and 0.3.0 work.
+# It makes the ambiguous band raise instead of rendering falsely.
+
+#: The band `FinancialData.ltv` refuses, and why the edges sit here.
+#:
+#: `max_ltv` is a covenant cap expressed as a fraction, so the numbers a caller
+#: might plausibly send to *both* fields are the fractions in [0.0, 1.0] — a
+#: cap above 100% is not a credit control. Across that band:
+#:
+#:   0.0        both conventions agree (0% either way), and R6's supplied-zero
+#:              ruling requires it to render, so it is allowed.
+#:   (0.0, 1.0] can only be the fraction convention. Read as percentage points
+#:              it claims an LTV of one percent or less — under a cent of debt
+#:              per dollar of collateral. Rejected.
+#:   > 1.0      taken at face value as percentage points.
+LTV_FRACTION_BAND_MAX = 1.0
+
+#: Numbers a caller could send to both `ltv` and `max_ltv` on one deal.
+#: Every one is a legitimate `max_ltv`.
+LTV_SHARED_NUMBERS = [0.0, 0.5, 0.65, 0.75, 0.8, 0.9, 0.95, 1.0]
+
+
+def _ltv_percentages(md):
+    """
+    The two LTV percentages the memo states, read back out of the rendered
+    text rather than recomputed.
+
+    Ground truth derived independently of the renderer — rule (i). A gate that
+    asked `fields`/`financial.py` to format its own expectation would follow
+    the defect wherever it went.
+    """
+    covenant = re.search(r"Maximum LTV of ([\d.]+)%", md)
+    metric = re.search(r"\| Loan to Value \| ([\d.]+)% \|", md)
+    assert covenant, "the covenant line vanished; this gate no longer measures it"
+    assert metric, "the Loan to Value row vanished; this gate no longer measures it"
+    return float(covenant.group(1)), float(metric.group(1))
+
+
+@pytest.mark.parametrize("number", LTV_SHARED_NUMBERS)
+def test_g12_one_number_never_becomes_two_percentages(number):
+    """
+    G12. For any number that is a legitimate `max_ltv`, a deal that supplies it
+    to `ltv` as well either refuses to construct or renders one percentage,
+    not two.
+
+    Red-proof (must fail): delete the `ltv` check from
+    `FinancialData.__post_init__` and re-run. `ltv=0.75` then constructs, and
+    the memo states `Maximum LTV of 75%` beside `| Loan to Value | 0.8% |`.
+    """
+    try:
+        deal = _deal(
+            financials=FinancialData(ltv=number),
+            loan_terms=LoanTerms(deal_type="loan", amount=2_500_000,
+                                 max_ltv=number))
+    except ValueError:
+        # Refused, loudly. That is the 0.2.1 answer for the ambiguous band.
+        assert number > 0.0, "a supplied zero must still render — see G9"
+        assert number <= LTV_FRACTION_BAND_MAX
+        return
+
+    covenant_pct, metric_pct = _ltv_percentages(CreditMemo(deal).to_markdown())
+    assert covenant_pct == pytest.approx(metric_pct), (
+        f"ltv={number} and max_ltv={number} rendered as {metric_pct}% and "
+        f"{covenant_pct}% in one memo")
+
+
+def test_g12_the_refusal_names_the_unit_it_wanted():
+    """
+    A loud error is only better than a false number if the reader can act on
+    it. The message must name the field, the unit expected, and the value
+    rejected — the shape `_normalise_choice` already uses for `borrower_type`.
+
+    Red-proof (must fail): replace the message with a bare
+    `raise ValueError("bad ltv")`.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        FinancialData(ltv=0.75)
+    message = str(excinfo.value)
+    assert "ltv" in message
+    assert "0.75" in message, "the rejected value is not quoted back"
+    assert "percentage points" in message, "the expected unit is not named"
+    assert "75.0" in message, "the message does not show the accepted spelling"
+
+
+def test_g12_a_real_ltv_still_constructs():
+    """
+    The refusal must not cost the package a legitimate input. Every one of
+    these is an LTV an underwriter writes down, in percentage points.
+
+    Red-proof (must fail): widen the band to `ltv < 5` — the "no real loan is
+    below a few percent" threshold — and `1.25` (a nearly repaid loan against
+    appreciated collateral) stops constructing.
+    """
+    for real in (1.25, 2.0, 4.9, 25.0, 62.5, 75.0, 80.0, 97.5, 105.0):
+        assert FinancialData(ltv=real).ltv == real
+
+
+def test_g12_zero_is_the_one_number_both_conventions_agree_on():
+    """
+    Why `0.0` is exempt rather than rejected with the rest of the band: it is
+    the single value the fraction and percentage-point readings render
+    identically, so it carries no ambiguity to fail loudly about — and G9
+    requires a supplied zero to reach the memo.
+    """
+    assert FinancialData(ltv=0.0).ltv == 0.0
+    md = CreditMemo(_deal(
+        financials=FinancialData(ltv=0.0),
+        loan_terms=LoanTerms(deal_type="loan", amount=2_500_000,
+                             max_ltv=0.0))).to_markdown()
+    assert _ltv_percentages(md) == (0.0, 0.0)
+
+
+def test_g12_holds_in_the_word_document_too(tmp_path):
+    """
+    R14's escalation over F3: the scale defect is wrong in *both* renderings,
+    where F3 was .docx-only. The .docx is built from this Markdown, so a gate
+    that only read the Markdown would be assuming the half that broke in 0.2.0.
+    """
+    docx = pytest.importorskip("docx")
+    with pytest.raises(ValueError):
+        FinancialData(ltv=0.75)
+
+    path = tmp_path / "ltv.docx"
+    CreditMemo(_deal(
+        financials=FinancialData(ltv=75.0),
+        loan_terms=LoanTerms(deal_type="loan", amount=2_500_000,
+                             max_ltv=0.75))).save_docx(str(path))
+    document = docx.Document(str(path))
+    text = "\n".join(
+        [p.text for p in document.paragraphs]
+        + [c.text for t in document.tables for r in t.rows for c in r.cells])
+    assert "75" in text
+    assert "0.8%" not in text, "the fraction rendering survived into the .docx"
+
+
+def test_g12_documents_the_unit_on_every_rate_and_ratio_field():
+    """
+    An undocumented unit is what produced R14, so the gate is on the
+    documentation, not only the validation. Every rate and ratio field on the
+    schema must carry a comment saying which scale it is in.
+
+    Red-proof (must fail): delete the `#:` comment above `FinancialData.ltv`.
+    """
+    import ast
+    import inspect
+
+    from creditmemo.data import schema as schema_module
+
+    source = inspect.getsource(schema_module)
+    lines = source.splitlines()
+    tree = ast.parse(source)
+
+    #: Field name -> the dataclass it lives on. Every one is a rate, a ratio
+    #: or a fee whose number is meaningless without a unit.
+    unit_bearing = {
+        "BorrowerProfile": (),
+        "LoanTerms": ("interest_rate", "max_ltv", "origination_fee_pct",
+                      "min_dscr_covenant"),
+        "FinancialData": ("dscr", "current_ratio", "debt_to_equity", "ltv",
+                          "projected_dscr_y1", "projected_dscr_y2",
+                          "projected_dscr_y3"),
+        "NMTCTerms": ("credit_price", "leverage_loan_rate", "qlici_a_rate",
+                      "qlici_b_rate", "cde_fee_rate"),
+    }
+
+    undocumented = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name not in unit_bearing:
+            continue
+        for statement in node.body:
+            if not isinstance(statement, ast.AnnAssign):
+                continue
+            name = getattr(statement.target, "id", None)
+            if name not in unit_bearing[node.name]:
+                continue
+            # The comment block immediately above the declaration.
+            above = []
+            index = statement.lineno - 2
+            while index >= 0 and lines[index].strip().startswith("#"):
+                above.append(lines[index])
+                index -= 1
+            if not any(word in "\n".join(above).lower() for word in
+                       ("fraction", "percentage point", "multiple", "dollars")):
+                undocumented.append(f"{node.name}.{name}")
+
+    assert not undocumented, (
+        f"rate/ratio fields with no unit documented: {sorted(undocumented)}")
+
+
+def test_g12_the_unit_gate_covers_every_such_field():
+    """
+    Guard the guard: the hand-written list above must not drift away from the
+    schema. Any field whose name marks it as a rate, ratio, fee or price has
+    to appear in it.
+    """
+    import ast
+    import inspect
+
+    from creditmemo.data import schema as schema_module
+
+    marks = ("_rate", "rate_", "ratio", "_pct", "dscr", "ltv", "price")
+    #: `debt_to_equity` is a ratio whose name carries none of the marks above.
+    #: Listed here so the guard can still check it has not vanished, without
+    #: pretending the name test would have found it.
+    unmarked = {"debt_to_equity"}
+    declared = {
+        "interest_rate", "max_ltv", "origination_fee_pct", "min_dscr_covenant",
+        "dscr", "current_ratio", "debt_to_equity", "ltv",
+        "projected_dscr_y1", "projected_dscr_y2", "projected_dscr_y3",
+        "credit_price", "leverage_loan_rate", "qlici_a_rate", "qlici_b_rate",
+        "cde_fee_rate",
+    }
+    found = set()
+    tree = ast.parse(inspect.getsource(schema_module))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.AnnAssign):
+                name = getattr(statement.target, "id", None)
+                if name and any(m in name for m in marks):
+                    found.add(name)
+    all_fields = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            all_fields |= {getattr(s.target, "id", None) for s in node.body
+                           if isinstance(s, ast.AnnAssign)}
+
+    assert not (found - declared), (
+        f"unit-bearing fields the gate does not name: {sorted(found - declared)}")
+    assert not (declared - all_fields), (
+        f"named by the gate but gone from the schema: {sorted(declared - all_fields)}")
+    assert unmarked <= declared
+
+
 # ── Packaging ────────────────────────────────────────────────────────────────
 
 def _declared_runtime_dependencies():

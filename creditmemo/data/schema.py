@@ -55,6 +55,47 @@ SECTORS = {
 }
 
 
+#: The largest `FinancialData.ltv` that can only have been meant as a fraction.
+#:
+#: `LoanTerms.max_ltv` is a covenant cap written as a fraction, so the numbers a
+#: caller might send to both fields are the fractions in [0.0, 1.0] — a cap
+#: above 100% is not a credit control. `ltv` is rendered unscaled, so anything
+#: in that band except zero reaches the memo as an LTV of one percent or less:
+#: under a cent of debt per dollar of collateral. Nothing legitimate lives
+#: there, so refusing the band costs no real input. Above it the two readings
+#: both produce coherent numbers and guessing between them would be the silent
+#: interpretation this release exists to remove.
+LTV_FRACTION_BAND_MAX = 1.0
+
+
+def _reject_fractional_ltv(value: Optional[float]) -> None:
+    """
+    Raise if ``ltv`` was supplied on the package's *other* scale.
+
+    ``FinancialData.ltv`` is in percentage points and ``LoanTerms.max_ltv`` is a
+    fraction, and through 0.2.1 neither said so. A caller who followed the
+    dominant convention and passed ``0.75`` to both got ``Maximum LTV of 75%``
+    beside ``| Loan to Value | 0.8% |`` in one memo — a 75% LTV reaching an
+    Investment Committee as 0.8% against a ``<= 80%`` benchmark, in both the
+    Markdown and the Word document.
+
+    Unifying the scales is the right end state and a breaking change, so 0.2.1
+    fails loudly instead. No interpretation is applied: ``<= 1.0 means a
+    fraction`` would be a silent guess, and a 100% LTV is real. ``0.0`` is
+    exempt because it is the one value the two conventions render identically,
+    and R6 requires a supplied zero to reach the memo. Gated by G12.
+    """
+    if value is None or value == 0:
+        return
+    if 0 < value <= LTV_FRACTION_BAND_MAX:
+        raise ValueError(
+            f"ltv must be in percentage points, not a fraction: got {value!r}, "
+            f"which renders as {value:.1f}%. A {value*100:.0f}% LTV is "
+            f"ltv={value*100:.1f}. (LoanTerms.max_ltv is the fraction; the two "
+            f"fields are on opposite scales until they are unified in 0.3.0.)"
+        )
+
+
 def _normalise_choice(value, allowed, field_name: str) -> str:
     """
     Match ``value`` against ``allowed`` case-insensitively and return the
@@ -112,7 +153,9 @@ class BorrowerProfile:
 class LoanTerms:
     """Loan or investment terms."""
     deal_type: str
+    #: Dollars.
     amount: float
+    #: A fraction, not percentage points: 4.5% is ``0.045``. Rendered ``*100``.
     interest_rate: Optional[float] = None
     term_years: Optional[int] = None
     amortization_years: Optional[int] = None
@@ -122,8 +165,14 @@ class LoanTerms:
     use_of_proceeds: Optional[str] = None
     closing_date: Optional[str] = None
     maturity_date: Optional[str] = None
+    #: A multiple, rendered as written: a 1.20x covenant is ``1.20``.
     min_dscr_covenant: Optional[float] = None
+    #: A fraction, not percentage points: a 75% cap is ``0.75``. Rendered
+    #: ``*100``. Note that ``FinancialData.ltv`` is on the *opposite* scale —
+    #: see ``_reject_fractional_ltv``. Unifying them is 0.3.0 work.
     max_ltv: Optional[float] = None
+    #: A fraction, not percentage points: a 1% fee is ``0.01``. Rendered
+    #: ``*100``, and multiplied by ``amount`` for ``origination_fee``.
     origination_fee_pct: float = 0.0
 
     def __post_init__(self):
@@ -161,16 +210,30 @@ class FinancialData:
     cash: Optional[float] = None
 
     # Key Ratios
+    #: A multiple, rendered as written: 1.35x is ``1.35``.
     dscr: Optional[float] = None
+    #: A multiple, rendered as written: 1.8x is ``1.8``.
     current_ratio: Optional[float] = None
+    #: A multiple, rendered as written: 3.0x is ``3.0``.
     debt_to_equity: Optional[float] = None
+    #: **Percentage points, not a fraction: a 75% LTV is ``75.0``.** This is
+    #: the one field in the package on this scale — ``LoanTerms.max_ltv``,
+    #: ``interest_rate``, ``cde_fee_rate`` and ``origination_fee_pct`` are all
+    #: fractions. A value in ``(0, 1.0]`` raises rather than render a false
+    #: number; see ``_reject_fractional_ltv``.
     ltv: Optional[float] = None
 
     # Projections
     projected_revenue_y1: Optional[float] = None
+    #: A multiple, rendered as written — the same scale as ``dscr``.
     projected_dscr_y1: Optional[float] = None
+    #: A multiple, rendered as written — the same scale as ``dscr``.
     projected_dscr_y2: Optional[float] = None
+    #: A multiple, rendered as written — the same scale as ``dscr``.
     projected_dscr_y3: Optional[float] = None
+
+    def __post_init__(self):
+        _reject_fractional_ltv(self.ltv)
 
     @property
     def revenue_trend(self) -> Optional[str]:
@@ -198,14 +261,24 @@ class FinancialData:
 @dataclass
 class NMTCTerms:
     """NMTC-specific deal terms (optional)."""
+    #: Dollars.
     nmtc_allocation: float
+    #: Dollars of investor equity per $1 of credit: $0.81 is ``0.81``.
     credit_price: float
+    #: A fraction, not percentage points: 3.17% is ``0.0317``.
+    #: Reaches neither rendering — see the 0.2.1 disclosure in CHANGELOG.md.
     leverage_loan_rate: float
+    #: A fraction, not percentage points. Reaches neither rendering.
     qlici_a_rate: float
+    #: A fraction, not percentage points. Reaches neither rendering.
     qlici_b_rate: float
+    #: A fraction, not percentage points: a 6% fee is ``0.06``. Rendered
+    #: ``*100``, and multiplied by ``nmtc_allocation`` for ``net_subsidy``.
     cde_fee_rate: float
     cde_name: Optional[str] = None
     investor_name: Optional[str] = None
+    #: Whole years — the NMTC compliance period, 7 by statute.
+    #: Reaches neither rendering — see the 0.2.1 disclosure in CHANGELOG.md.
     compliance_years: int = 7
 
     @property
