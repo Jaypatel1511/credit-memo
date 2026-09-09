@@ -15,6 +15,14 @@ def _fmt_ratio(val, suffix="x", decimals=2) -> str:
 
 
 def generate(deal: DealProfile) -> str:
+    """
+    Every optional figure below is tested with ``is not None``, never for
+    truthiness. A supplied 0 — no cash on hand, no net income, a fully
+    depreciated asset base — is one of the most material numbers an underwriter
+    can report, and truthiness discarded it. ``FinancialData(cash=450_000)``
+    used to render no Balance Sheet section at all, because ``cash`` was only
+    consulted after three *other* fields had passed a truthiness test.
+    """
     f = deal.financial_data
 
     lines = [
@@ -37,7 +45,9 @@ def generate(deal: DealProfile) -> str:
         )
         lines.append("")
 
-    has_balance = any([f.total_assets, f.total_liabilities, f.net_assets_equity])
+    has_balance = any(v is not None for v in
+                      (f.total_assets, f.total_liabilities,
+                       f.net_assets_equity, f.cash))
     if has_balance:
         lines += [
             "### Balance Sheet Summary (Most Recent)",
@@ -45,13 +55,13 @@ def generate(deal: DealProfile) -> str:
             "| Item | Amount |",
             "|------|--------|",
         ]
-        if f.total_assets:
+        if f.total_assets is not None:
             lines.append(f"| Total Assets | {_fmt(f.total_assets)} |")
-        if f.total_liabilities:
+        if f.total_liabilities is not None:
             lines.append(f"| Total Liabilities | {_fmt(f.total_liabilities)} |")
-        if f.net_assets_equity:
+        if f.net_assets_equity is not None:
             lines.append(f"| Net Assets / Equity | {_fmt(f.net_assets_equity)} |")
-        if f.cash:
+        if f.cash is not None:
             lines.append(f"| Cash & Equivalents | {_fmt(f.cash)} |")
         lines.append("")
 
@@ -63,11 +73,13 @@ def generate(deal: DealProfile) -> str:
         f"| Debt Service Coverage Ratio | {_fmt_ratio(f.dscr)} | >= 1.25x |",
         f"| Current Ratio | {_fmt_ratio(f.current_ratio)} | >= 1.0x |",
         f"| Debt to Equity | {_fmt_ratio(f.debt_to_equity)} | < 3.0x |",
-        f"| Loan to Value | {_fmt_ratio(f.ltv, suffix='%', decimals=1) if f.ltv else 'N/A'} | <= 80% |",
+        f"| Loan to Value | {_fmt_ratio(f.ltv, suffix='%', decimals=1) if f.ltv is not None else 'N/A'} | <= 80% |",
         "",
     ]
 
-    has_proj = any([f.projected_revenue_y1, f.projected_dscr_y1])
+    has_proj = any(v is not None for v in
+                   (f.projected_revenue_y1, f.projected_dscr_y1,
+                    f.projected_dscr_y2, f.projected_dscr_y3))
     if has_proj:
         lines += [
             "### Financial Projections",
@@ -75,11 +87,11 @@ def generate(deal: DealProfile) -> str:
             "| Metric | Year 1 | Year 2 | Year 3 |",
             "|--------|--------|--------|--------|",
         ]
-        if f.projected_revenue_y1:
+        if f.projected_revenue_y1 is not None:
             lines.append(
                 f"| Revenue | {_fmt(f.projected_revenue_y1)} | — | — |"
             )
-        if f.projected_dscr_y1:
+        if f.projected_dscr_y1 is not None:
             lines.append(
                 f"| DSCR | {_fmt_ratio(f.projected_dscr_y1)} | "
                 f"{_fmt_ratio(f.projected_dscr_y2)} | "

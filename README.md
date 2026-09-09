@@ -23,6 +23,9 @@ generate a professional IC memo instantly.
     # For Word .docx output
     pip install credit-memo[docx]
 
+credit-memo imports nothing outside the standard library. Only the optional
+`[docx]` extra adds a dependency (`python-docx`).
+
 ---
 
 ## Quickstart
@@ -95,19 +98,24 @@ generate a professional IC memo instantly.
 
 ## Word (.docx) Output
 
-`save_docx()` writes headings, paragraphs, bullet lists and **every table in the
-memo as a real Word table** — deal summary, proposed terms, NMTC structure,
-historical financials, credit metrics, projections, impact metrics, risk factors
-and the IC signature block. Tables use the built-in `Table Grid` style with a
-bold header row.
+`save_docx()` writes headings, paragraphs, bullet and numbered lists, section
+rules and **every table in the memo as a real Word table** — deal summary,
+proposed terms, NMTC structure, historical financials, credit metrics,
+projections, impact metrics, risk factors and the IC signature block. Tables use
+the built-in `Table Grid` style with a bold header row. Conditions of Approval
+use Word's `List Number` style, and the rules between sections are paragraph
+borders rather than rows of underscores.
 
-It does not apply column widths, merged cells, number alignment, or a firm
-template — the .docx is built by parsing the Markdown the same deal produces, so
-it carries the memo's content and structure but no Word-specific formatting.
+The .docx is a pure function of the Markdown the same deal produces: every
+heading, paragraph, list item, rule and table in the Word file comes from a line
+of that Markdown, and nothing is added that has no line behind it. It does not
+apply column widths, merged cells, number alignment, or a firm template.
 
-> **credit-memo 0.1.0 dropped every table from its .docx output** while still
-> reporting success. If you generated Word memos with 0.1.0, regenerate them.
-> See the
+> **credit-memo 0.2.0 and 0.1.0 printed the memo's front matter twice** in every
+> Word file — the title, the deal name and the whole Fund / Prepared By / Date /
+> IC Date block appeared once as a hand-built cover block and again from the
+> Markdown, in a different shape. **0.1.0 additionally dropped every table.** If
+> you generated Word memos with either release, regenerate them. See the
 > [changelog](https://github.com/Jaypatel1511/credit-memo/blob/main/CHANGELOG.md).
 
 ---
@@ -121,6 +129,42 @@ it carries the memo's content and structure but no Word-specific formatting.
 5. Impact Analysis — jobs, units, demographics, eligibility flags
 6. Risk Assessment — risk factors by severity with mitigants
 7. IC Recommendation — formal recommendation with conditions and signature block
+
+---
+
+## Stating What You Know, and What You Don't
+
+The eligibility and certification flags are **three-state**:
+
+| value | rendering |
+|---|---|
+| `True` | the affirmative line — `✅ Low-Income Area` |
+| `False` | an explicit negative — `❌ Not a Low-Income Area` |
+| `None` *(default)* | omitted entirely |
+
+`is_cdfi_certified`, `is_mdi`, `is_low_income_area`, `is_nmtc_eligible`,
+`is_opportunity_zone`, `is_minority_borrower` and `is_women_borrower` all work
+this way. Passing `False` says "we checked, and the answer is no"; leaving the
+field alone says nothing at all. Before 0.2.1 these were plain booleans
+defaulting to `False`, so the two were the same value and both rendered as
+silence.
+
+The same principle applies to figures: every optional financial field is tested
+for `None`, not for truthiness, so a supplied `0` — no cash on hand, no net
+income — is rendered as `$0.00MM` rather than discarded.
+
+And a deal with no `risks` says so as a fact about its inputs. It does not
+claim the deal has no risks; the package has no way to know that.
+
+---
+
+## Risk Severities
+
+`RiskFactor.severity` must be one of `High`, `Medium` or `Low`, matched
+case-insensitively — `"high"`, `"HIGH"` and `"High"` are all accepted and
+normalise to `High`. Anything else raises `ValueError`. All the validated string
+fields (`borrower_type`, `sector`, `deal_type`, `recommendation`, `severity`)
+behave this way.
 
 ---
 

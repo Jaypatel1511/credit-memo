@@ -14,16 +14,19 @@ wrong place. So the load-bearing gate here is positional: table for table, row
 for row, cell for cell.
 """
 import io
+import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from creditmemo.data.schema import RiskFactor
 from creditmemo.memo import CreditMemo
-from creditmemo.renderers.docx import TABLE_STYLE, header_rows_data
+from creditmemo.renderers.docx import TABLE_STYLE
 from creditmemo.renderers.markdown import render as render_markdown
 from creditmemo.tables import (
     block_to_rows,
+    iter_segments,
     content_rows,
     iter_table_blocks,
     separator_index,
@@ -56,11 +59,6 @@ def _grid(table):
     return [[c.text for c in r.cells] for r in table.rows]
 
 
-#: The header table's labels, stated here rather than derived, because a gate
-#: that reads them out of the renderer follows the renderer when a row goes
-#: missing. Changing this list is a deliberate change to the memo's front page.
-HEADER_LABELS = ["Fund:", "Prepared By:", "Date:", "IC Date:"]
-
 #: The two .docx formatting properties README.md promises, written out here
 #: rather than read from the renderer: a gate that compares the artifact against
 #: creditmemo.renderers.docx.TABLE_STYLE follows that constant wherever it goes
@@ -69,8 +67,9 @@ HEADER_LABELS = ["Fund:", "Prepared By:", "Date:", "IC Date:"]
 DOCUMENTED_TABLE_STYLE = "Table Grid"
 README = Path(__file__).resolve().parent.parent / "README.md"
 
-#: Which DealProfile field each header label is supposed to be showing.
-HEADER_SOURCE = {
+#: Which DealProfile field each metadata label is supposed to be showing. Used
+#: to anchor the .docx against the deal itself rather than against the renderer.
+METADATA_SOURCE = {
     "Fund:": lambda d: d.fund_name,
     "Prepared By:": lambda d: d.prepared_by,
     "Date:": lambda d: d.prepared_date,
@@ -110,8 +109,8 @@ def test_the_deal_matrix_covers_two_different_deals(sample_deal, sample_nmtc_dea
 
 def test_docx_row_count_conserves_markdown_rows(any_deal, tmp_path):
     """
-    Total rows across the generated .docx tables, minus the hand-built header
-    table, must equal the number of non-separator Markdown table rows.
+    Total rows across the generated .docx tables must equal the number of
+    non-separator Markdown table rows.
 
     Both sides are counted at test time from the actual artifacts.
     """
@@ -120,23 +119,15 @@ def test_docx_row_count_conserves_markdown_rows(any_deal, tmp_path):
     md = render_markdown(any_deal)
     md_rows = len(content_rows(md.split("\n")))
 
-    # The header block is built directly from the DealProfile, before any
-    # Markdown is parsed, so it is the first table in the document. Identify it
-    # by its content rather than assuming a position.
-    header = doc.tables[0]
-    assert header.rows[0].cells[0].text == "Fund:"
-    header_rows = len(header.rows)
-
     docx_rows = sum(len(t.rows) for t in doc.tables)
 
-    assert docx_rows - header_rows == md_rows
+    assert docx_rows == md_rows
 
 
 def test_docx_table_count_matches_markdown_table_count(any_deal, tmp_path):
     doc = _save(any_deal, tmp_path)
     blocks = _markdown_blocks(any_deal)
-    # +1 for the hand-built header table.
-    assert len(doc.tables) == len(blocks) + 1
+    assert len(doc.tables) == len(blocks)
 
 
 def test_every_markdown_cell_reaches_the_docx(any_deal, tmp_path):
@@ -150,7 +141,7 @@ def test_every_markdown_cell_reaches_the_docx(any_deal, tmp_path):
     )
     docx_cells = sorted(
         c.text
-        for t in doc.tables[1:]           # skip the hand-built header table
+        for t in doc.tables
         for r in t.rows
         for c in r.cells
     )
@@ -170,7 +161,7 @@ def test_docx_cells_match_the_markdown_positionally(any_deal, tmp_path):
     doc = _save(any_deal, tmp_path)
     md_blocks = _markdown_blocks(any_deal)
     assert md_blocks, "no Markdown tables — this gate would pass vacuously"
-    docx_tables = [_grid(t) for t in doc.tables[1:]]  # skip hand-built header
+    docx_tables = [_grid(t) for t in doc.tables]
     assert docx_tables == md_blocks
 
 
@@ -245,7 +236,7 @@ def test_docx_table_header_row_is_bold_and_body_rows_are_not(any_deal, tmp_path)
     doc = _save(any_deal, tmp_path)
     bold_runs = 0
     body_runs = 0
-    for table in doc.tables[1:]:  # the hand-built header table has no header row
+    for table in doc.tables:
         for cell in table.rows[0].cells:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
@@ -259,38 +250,6 @@ def test_docx_table_header_row_is_bold_and_body_rows_are_not(any_deal, tmp_path)
                         body_runs += 1
     assert bold_runs, "no header runs examined — this gate would pass vacuously"
     assert body_runs, "no body runs examined — this gate would pass vacuously"
-
-
-def test_docx_header_table_has_every_documented_label(any_deal, tmp_path):
-    """
-    The hand-built header table is the only part of the .docx with no Markdown
-    counterpart, so the conservation gates measure it from the artifact and
-    would follow it anywhere. This is the independent anchor.
-    """
-    doc = _save(any_deal, tmp_path)
-    header = doc.tables[0]
-    assert [r.cells[0].text for r in header.rows] == HEADER_LABELS
-
-
-def test_docx_header_table_matches_the_renderer_construction(any_deal, tmp_path):
-    doc = _save(any_deal, tmp_path)
-    assert _grid(doc.tables[0]) == [list(p) for p in header_rows_data(any_deal)]
-
-
-def test_docx_header_values_are_present_when_the_deal_field_is(any_deal, tmp_path):
-    """
-    Blanking a header value keeps every label and every row count intact. Each
-    value is checked against the DealProfile field it claims to show.
-    """
-    doc = _save(any_deal, tmp_path)
-    for row in doc.tables[0].rows:
-        label, value = row.cells[0].text, row.cells[1].text
-        source = HEADER_SOURCE[label](any_deal)
-        assert value.strip(), f"header value for {label!r} is blank"
-        if source:
-            assert value == str(source), (
-                f"header shows {value!r} for {label!r}, deal says {source!r}"
-            )
 
 
 @pytest.mark.parametrize("category,description,mitigant", [
@@ -319,7 +278,7 @@ def test_a_risk_row_of_dashes_survives_to_the_docx(
 
     # And the conservation gate must still be measuring something real.
     md_rows = len(content_rows(render_markdown(sample_deal).split("\n")))
-    docx_rows = sum(len(t.rows) for t in doc.tables) - len(doc.tables[0].rows)
+    docx_rows = sum(len(t.rows) for t in doc.tables)
     assert docx_rows == md_rows
 
 
@@ -347,3 +306,191 @@ def test_save_docx_reports_the_path(sample_deal, tmp_path, capsys):
     path = str(tmp_path / "reported.docx")
     CreditMemo(sample_deal).save_docx(path)
     assert path in capsys.readouterr().out
+
+
+# ── R5: every piece of content appears exactly once ───────────────────────────
+#
+# The ruled invariant for 0.2.1: "Every piece of content appears in the .docx
+# exactly as many times as it appears in the Markdown."
+#
+# Until 0.2.1 the renderer emitted a hand-built cover block — a Title, an H1 of
+# the deal name and a four-row metadata table read off the DealProfile — and
+# then parsed the Markdown, which carries all three itself. The title, the deal
+# name and the whole Fund/Prepared By/Date/IC Date block appeared twice in every
+# Word memo the package ever produced. Every gate in this module was written to
+# subtract `doc.tables[0]` and therefore measured around the duplicate.
+#
+# These normalisers are written here rather than imported from the renderer on
+# purpose: a gate that strips list markers with the renderer's own regex follows
+# that regex wherever it goes.
+_MD_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
+_MD_BULLET = re.compile(r"^[-*]\s+(.*)$")
+_MD_NUMBER = re.compile(r"^\d+\.\s+(.*)$")
+_MD_RULE = "---"
+
+
+def _strip_emphasis(text):
+    return text.replace("**", "").replace("*", "").strip()
+
+
+def _md_atoms(deal):
+    """
+    Every piece of content in the Markdown memo, as the text a reader sees.
+
+    Table cells count individually, because that is how they land in Word.
+    Blank lines and the section rules are syntax, not content.
+    """
+    md = render_markdown(deal)
+    atoms = []
+    for kind, payload in iter_segments(md.split("\n")):
+        if kind == "table":
+            atoms += [c for row in block_to_rows(payload) for c in row]
+            continue
+        line = payload
+        if not line.strip() or line.strip() == _MD_RULE:
+            continue
+        for pattern in (_MD_HEADING, _MD_BULLET, _MD_NUMBER):
+            match = pattern.match(line)
+            if match:
+                line = match.groups()[-1]
+                break
+        atoms.append(_strip_emphasis(line))
+    return atoms
+
+
+def _docx_atoms(doc):
+    """The same, read back out of the saved Word document."""
+    atoms = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    atoms += [c.text.strip() for t in doc.tables for r in t.rows for c in r.cells]
+    return atoms
+
+
+def test_g1_every_piece_of_content_appears_exactly_as_often_as_in_the_markdown(
+    any_deal, tmp_path
+):
+    """
+    G1 — content multiset.
+
+    Red-proof (must fail): restore the duplicate cover block in
+    creditmemo/renderers/docx.py, i.e. re-add
+
+        title = doc.add_heading("INVESTMENT COMMITTEE MEMORANDUM", 0)
+        doc.add_heading(deal.deal_name, 1)
+        ... the four-row header table ...
+
+    before the iter_segments loop.
+    Observed: 2 failed (loan, nmtc) — plus 6 more across G2/G3 and the
+    conservation gates.
+    """
+    doc = _save(any_deal, tmp_path)
+    md_counts = Counter(_md_atoms(any_deal))
+    docx_counts = Counter(_docx_atoms(doc))
+    assert md_counts, "no content — this gate would pass vacuously"
+    assert docx_counts == md_counts
+
+
+def test_g1_holds_for_prose_alone(any_deal, tmp_path):
+    """
+    G1, restricted to the non-table half of the document.
+
+    Stated separately because that half is where 0.2.0's defects lived and it
+    is the half that had no gate at all: on 0.2.0, deleting the entire
+    non-table branch of the renderer — title, every heading, every narrative
+    paragraph, every bullet and every rule — left the suite at 86 passed.
+    """
+    doc = _save(any_deal, tmp_path)
+    table_cells = Counter(
+        c for block in _markdown_blocks(any_deal) for row in block for c in row
+    )
+    md_prose = Counter(_md_atoms(any_deal)) - table_cells
+    docx_prose = Counter(p.text.strip() for p in doc.paragraphs if p.text.strip())
+    assert md_prose, "no prose — this gate would pass vacuously"
+    assert docx_prose == md_prose
+
+
+def test_g2_every_heading_appears_exactly_once_as_a_heading(any_deal, tmp_path):
+    """
+    G2 — heading multiset.
+
+    Every `#`/`##`/`###` heading in the Markdown appears exactly once in the
+    .docx as a Title or Heading N paragraph, and the .docx invents none.
+
+    Red-proof (must fail): duplicate any one heading, e.g. change the `## `
+    branch of the renderer to call doc.add_heading twice.
+    Observed: 2 failed (loan, nmtc).
+    """
+    doc = _save(any_deal, tmp_path)
+    md = render_markdown(any_deal)
+    md_headings = []
+    for line in md.split("\n"):
+        match = _MD_HEADING.match(line)
+        if match:
+            md_headings.append(_strip_emphasis(match.group(2)))
+    docx_headings = [
+        p.text.strip() for p in doc.paragraphs
+        if p.style.name == "Title" or p.style.name.startswith("Heading")
+    ]
+    assert md_headings, "no headings — this gate would pass vacuously"
+    assert Counter(docx_headings) == Counter(md_headings)
+    duplicated = [h for h, n in Counter(docx_headings).items() if n > 1]
+    assert not duplicated, f"heading rendered more than once: {duplicated}"
+
+
+def test_g2_the_first_heading_is_the_title_style(any_deal, tmp_path):
+    """
+    The memo title takes Word's Title style — one paragraph for one Markdown
+    heading. R5 permits styling the first `# ` as Title; it forbids emitting a
+    Title paragraph *and* the heading.
+    """
+    doc = _save(any_deal, tmp_path)
+    headings = [p for p in doc.paragraphs
+                if p.style.name == "Title" or p.style.name.startswith("Heading")]
+    assert headings[0].style.name == "Title"
+    assert [p.style.name for p in headings].count("Title") == 1
+    md_first = render_markdown(any_deal).split("\n")[0]
+    assert headings[0].text == _MD_HEADING.match(md_first).group(2)
+
+
+def test_g3_table_structure_matches_the_markdown(any_deal, tmp_path):
+    """
+    G3 — table structure. Table count, and each table's row and column counts.
+
+    Red-proof (must fail): emit one extra table, e.g. call _add_table twice for
+    each block.
+    Observed: 2 failed (loan, nmtc) — plus 8 more across G1 and the
+    conservation gates.
+    """
+    doc = _save(any_deal, tmp_path)
+    md_shape = [(len(b), len(b[0])) for b in _markdown_blocks(any_deal)]
+    docx_shape = [(len(t.rows), len(t.columns)) for t in doc.tables]
+    assert md_shape, "no tables — this gate would pass vacuously"
+    assert docx_shape == md_shape
+
+
+def test_docx_carries_the_deal_metadata_exactly_once(any_deal, tmp_path):
+    """
+    The independent anchor, replacing the three gates that used to hold the
+    hand-built header table in place.
+
+    Fund / Prepared By / Date / IC Date are checked against the DealProfile
+    itself, not against the renderer. Each must be present, and must appear as
+    many times as the Markdown says — not the extra time 0.2.0 added.
+
+    The Markdown itself restates some of this metadata (the header block, the
+    Executive Summary and the signature block), so the expected count is read
+    off the Markdown rather than assumed to be one.
+    """
+    doc = _save(any_deal, tmp_path)
+    atoms = _docx_atoms(doc)
+    md_atoms = _md_atoms(any_deal)
+    for label, source in METADATA_SOURCE.items():
+        value = source(any_deal)
+        if not value:
+            continue
+        rendered = f"{label} {value}"
+        expected = md_atoms.count(rendered)
+        assert expected >= 1, f"{rendered!r} is not in the Markdown at all"
+        assert atoms.count(rendered) == expected, (
+            f"{rendered!r} appears {atoms.count(rendered)} times in the .docx, "
+            f"{expected} times in the Markdown"
+        )

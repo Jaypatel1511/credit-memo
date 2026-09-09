@@ -39,7 +39,7 @@ def generate(deal: DealProfile) -> str:
         f"| Sector | {escape_cell(SECTORS.get(b.sector, b.sector))} |",
         f"| Location | {escape_cell(b.city)}, {escape_cell(b.state)} |",
         f"| Deal Type | {escape_cell(DEAL_TYPES.get(lt.deal_type, lt.deal_type))} |",
-        f"| Amount | ${lt.amount_mm:.2f}MM |",
+        f"| Amount | ${lt.amount:,.0f} (${lt.amount_mm:.2f}MM) |",
         f"| Interest Rate | {rate_str} |",
         f"| Term | {term_str} |",
         f"| Use of Proceeds | {escape_cell(lt.use_of_proceeds or 'See Transaction Structure')} |",

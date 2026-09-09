@@ -25,13 +25,20 @@ RECOMMENDATIONS = {
 
 # ── Borrower Types ────────────────────────────────────────────────────────────
 BORROWER_TYPES = {
-    "nonprofit":    "Nonprofit organization (501c3)",
+    "nonprofit":    "Nonprofit organization",
     "for_profit":   "For-profit business",
     "cdfi":         "Community Development Financial Institution",
     "government":   "Government entity",
     "cooperative":  "Cooperative",
     "individual":   "Individual borrower",
 }
+
+# ── Risk Severities ───────────────────────────────────────────────────────────
+#: The severity levels the Risk Assessment section groups by. Declared here, and
+#: validated on construction, for the same reason DEAL_TYPES and BORROWER_TYPES
+#: are: a severity outside this vocabulary used to construct without complaint
+#: and then vanish from the memo, because the renderer groups by exact match.
+SEVERITIES = ("High", "Medium", "Low")
 
 # ── Sectors ───────────────────────────────────────────────────────────────────
 SECTORS = {
@@ -46,6 +53,29 @@ SECTORS = {
     "microenterprise":      "Microenterprise",
     "other":                "Other",
 }
+
+
+def _normalise_choice(value, allowed, field_name: str) -> str:
+    """
+    Match ``value`` against ``allowed`` case-insensitively and return the
+    canonical spelling, or raise ``ValueError`` naming the allowed values.
+
+    Every string enum in this module goes through here. Before 0.2.1 the four
+    validated fields compared with ``in`` against a dict of lowercase keys, so
+    ``"Nonprofit"`` was rejected, while ``RiskFactor.severity`` was not
+    validated at all and ``"high"`` was accepted by the constructor and then
+    silently dropped by the renderer. Case-insensitive matching is strictly
+    wider than the old exact match: nothing that was accepted before is
+    rejected now.
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be one of {list(allowed)}, got {value!r}"
+        )
+    for candidate in allowed:
+        if value.strip().lower() == candidate.lower():
+            return candidate
+    raise ValueError(f"{field_name} must be one of {list(allowed)}")
 
 
 @dataclass
@@ -63,18 +93,19 @@ class BorrowerProfile:
     description: Optional[str] = None
     mission: Optional[str] = None
     website: Optional[str] = None
-    is_cdfi_certified: bool = False
-    is_mdi: bool = False
+    #: Tri-state. ``True`` renders the affirmative line, ``False`` renders an
+    #: explicit negative, ``None`` (the default) renders nothing at all. Before
+    #: 0.2.1 these were ``bool = False``, so a caller who had actually checked
+    #: and recorded "no" was indistinguishable from one who never touched the
+    #: field, and both rendered as silence.
+    is_cdfi_certified: Optional[bool] = None
+    is_mdi: Optional[bool] = None
 
     def __post_init__(self):
-        if self.borrower_type not in BORROWER_TYPES:
-            raise ValueError(
-                f"borrower_type must be one of {list(BORROWER_TYPES.keys())}"
-            )
-        if self.sector not in SECTORS:
-            raise ValueError(
-                f"sector must be one of {list(SECTORS.keys())}"
-            )
+        self.borrower_type = _normalise_choice(
+            self.borrower_type, BORROWER_TYPES, "borrower_type"
+        )
+        self.sector = _normalise_choice(self.sector, SECTORS, "sector")
 
 
 @dataclass
@@ -96,10 +127,7 @@ class LoanTerms:
     origination_fee_pct: float = 0.0
 
     def __post_init__(self):
-        if self.deal_type not in DEAL_TYPES:
-            raise ValueError(
-                f"deal_type must be one of {list(DEAL_TYPES.keys())}"
-            )
+        self.deal_type = _normalise_choice(self.deal_type, DEAL_TYPES, "deal_type")
         if self.amount <= 0:
             raise ValueError("amount must be positive")
 
@@ -191,11 +219,13 @@ class ImpactData:
     patients_served: int = 0
     students_served: int = 0
     businesses_supported: int = 0
-    is_low_income_area: bool = False
-    is_nmtc_eligible: bool = False
-    is_opportunity_zone: bool = False
-    is_minority_borrower: bool = False
-    is_women_borrower: bool = False
+    #: Tri-state, for the reason given on BorrowerProfile.is_cdfi_certified:
+    #: ``True`` affirms, ``False`` denies, ``None`` (the default) is silent.
+    is_low_income_area: Optional[bool] = None
+    is_nmtc_eligible: Optional[bool] = None
+    is_opportunity_zone: Optional[bool] = None
+    is_minority_borrower: Optional[bool] = None
+    is_women_borrower: Optional[bool] = None
     census_tract: Optional[str] = None
     impact_narrative: Optional[str] = None
 
@@ -205,8 +235,11 @@ class RiskFactor:
     """A single identified risk with its mitigant."""
     category: str       # e.g. "Credit", "Market", "Operational"
     description: str
-    severity: str       # "High", "Medium", "Low"
+    severity: str       # one of SEVERITIES, matched case-insensitively
     mitigant: str
+
+    def __post_init__(self):
+        self.severity = _normalise_choice(self.severity, SEVERITIES, "severity")
 
 
 @dataclass
@@ -231,10 +264,9 @@ class DealProfile:
     deal_summary: Optional[str] = None
 
     def __post_init__(self):
-        if self.recommendation not in RECOMMENDATIONS:
-            raise ValueError(
-                f"recommendation must be one of {list(RECOMMENDATIONS.keys())}"
-            )
+        self.recommendation = _normalise_choice(
+            self.recommendation, RECOMMENDATIONS, "recommendation"
+        )
 
     @property
     def recommendation_text(self) -> str:

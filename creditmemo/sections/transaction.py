@@ -19,15 +19,15 @@ def generate(deal: DealProfile) -> str:
         f"| Interest Rate | {rate_str} |",
     ]
 
-    if lt.term_years:
+    if lt.term_years is not None:
         lines.append(f"| Loan Term | {lt.term_years} years |")
-    if lt.amortization_years:
+    if lt.amortization_years is not None:
         lines.append(f"| Amortization | {lt.amortization_years} years |")
     if lt.io_periods:
         lines.append(f"| Interest-Only Period | {lt.io_periods} months |")
-    if lt.closing_date:
+    if lt.closing_date is not None:
         lines.append(f"| Anticipated Closing | {escape_cell(lt.closing_date)} |")
-    if lt.maturity_date:
+    if lt.maturity_date is not None:
         lines.append(f"| Maturity Date | {escape_cell(lt.maturity_date)} |")
     if lt.origination_fee_pct:
         lines.append(
@@ -62,9 +62,9 @@ def generate(deal: DealProfile) -> str:
         ]
 
     covenants = []
-    if lt.min_dscr_covenant:
+    if lt.min_dscr_covenant is not None:
         covenants.append(f"Minimum DSCR of {lt.min_dscr_covenant:.2f}x")
-    if lt.max_ltv:
+    if lt.max_ltv is not None:
         covenants.append(f"Maximum LTV of {lt.max_ltv*100:.0f}%")
 
     if covenants:

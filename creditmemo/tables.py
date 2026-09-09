@@ -148,18 +148,37 @@ def iter_segments(lines: Sequence[str]) -> Iterator[Tuple[str, object]]:
     a heading are two blocks. The .docx renderer drives its whole output from
     this, and the conservation gates count rows from it, so the two sides cannot
     disagree about where one table stops and the next begins.
+
+    A run of pipe lines is a table only if it carries a delimiter rule where GFM
+    requires one — immediately under the header. A leading ``|`` alone is not
+    enough, and treating it as enough silently turned underwriter prose into a
+    Word table: ``deal_summary="| we structured this as a leveraged loan"``
+    left the Markdown as written and arrived in the .docx as a one-cell table,
+    with the pipe eaten. Every table this package emits has its rule at index 1,
+    so no memo table is affected; a lone pipe line is now what it reads as,
+    which is a sentence.
     """
     block: List[str] = []
+
+    def flush(block):
+        if separator_index(block) is not None:
+            yield "table", block
+        else:
+            for stray in block:
+                yield "text", stray
+
     for line in lines:
         if is_table_line(line):
             block.append(line)
             continue
         if block:
-            yield "table", block
+            for item in flush(block):
+                yield item
             block = []
         yield "text", line
     if block:
-        yield "table", block
+        for item in flush(block):
+            yield item
 
 
 def iter_table_blocks(lines: Sequence[str]) -> Iterator[List[str]]:
