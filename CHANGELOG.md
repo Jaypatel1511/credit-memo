@@ -375,9 +375,11 @@ and observed to fail.
 **A dead clause in the `ltv` check, and a gate that could not fail on it.**
 `_reject_fractional_ltv` began `if value is None or value == 0: return`, above a
 band written `0 < value <= 1.0` that already excluded zero. The clause could
-never fire; deleting it left the suite at 284 passed, and the docstring named it
-as the thing keeping zero out. It is gone and the zero test stays -- the
-property is real, the clause was not producing it.
+never fire, and the docstring named it as the thing keeping zero out. Measured
+both ways at 340 tests: with the clause and without it the suite is 340 passed,
+and `test_g12_zero_is_the_one_number_both_conventions_agree_on` passes either
+way. It is gone and that test stays -- the property is real, the clause was not
+producing it.
 
 **The README enumerated nine tables and the memo renders ten.** Balance Sheet
 Summary was missing from the Word-output section, and it is the one an IC reads

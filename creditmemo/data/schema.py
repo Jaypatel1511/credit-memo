@@ -88,8 +88,9 @@ def _reject_fractional_ltv(value: Optional[float]) -> None:
 
     R22: through 0.2.1 the exemption was *also* written as a ``value == 0``
     early return above the band. It could never fire, because the band already
-    excluded zero, and deleting it left the suite at 284 passed. The docstring
-    described it as the thing keeping zero out; it was not.
+    excluded zero, and the docstring described it as the thing keeping zero out.
+    Measured both ways: with the clause and without it the suite is 340 passed,
+    and the gate on zero passes either way. It was not producing the property.
 
     Called from two places, and both are load-bearing (R20). ``__post_init__``
     catches the mistake at construction, where the traceback points at the
