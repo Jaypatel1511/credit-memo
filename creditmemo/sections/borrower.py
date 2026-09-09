@@ -1,10 +1,16 @@
 """Borrower Profile section generator."""
 from creditmemo.data.schema import DealProfile, BORROWER_TYPES, SECTORS
 
-#: (attribute, label) for the tri-state certification flags, in field order.
+#: (attribute, affirmative, negative) for the tri-state certification flags, in
+#: field order. Each flag carries its own negative string rather than borrowing
+#: the affirmative one under a negating header: a header does not reach the run
+#: the label sits in, so "**Not certified:** CDFI Certified" contradicted itself
+#: on the page and read as "CDFI Certified" to anyone skimming the bold runs of
+#: the Word document. Same shape as impact.TARGET_MARKET_FLAGS.
 CERTIFICATION_FLAGS = (
-    ("is_cdfi_certified", "CDFI Certified"),
-    ("is_mdi", "Minority Depository Institution (MDI)"),
+    ("is_cdfi_certified", "CDFI Certified",       "Not CDFI certified"),
+    ("is_mdi",            "Minority Depository Institution (MDI)",
+                          "Not a Minority Depository Institution (MDI)"),
 )
 
 #: What the block says when every certification flag is ``None``.
@@ -21,20 +27,18 @@ def _certification_lines(b) -> list:
     nothing. Before 0.2.1 these were plain ``bool`` defaulting to ``False``, so
     "we checked, and this borrower is not CDFI certified" and "nobody filled
     this in" produced byte-identical memos.
+
+    Each line negates itself. Gated by G8.
     """
-    held = [label for attr, label in CERTIFICATION_FLAGS
-            if getattr(b, attr) is True]
-    not_held = [label for attr, label in CERTIFICATION_FLAGS
-                if getattr(b, attr) is False]
-
-    if not held and not not_held:
-        return [NO_CERTIFICATION_FLAGS_TEXT, ""]
-
     lines = []
-    if held:
-        lines.append(f"**Certifications:** {', '.join(held)}")
-    if not_held:
-        lines.append(f"**Not certified:** {', '.join(not_held)}")
+    for attr, yes, no in CERTIFICATION_FLAGS:
+        value = getattr(b, attr)
+        if value is True:
+            lines.append(f"- ✅ {yes}")
+        elif value is False:
+            lines.append(f"- ❌ {no}")
+    if not lines:
+        return [NO_CERTIFICATION_FLAGS_TEXT, ""]
     lines.append("")
     return lines
 
@@ -58,6 +62,8 @@ def generate(deal: DealProfile) -> str:
     if b.website:
         lines.append(f"**Website:** {b.website}")
 
+    lines.append("")
+    lines.append("### Certifications & Designations")
     lines.append("")
     lines += _certification_lines(b)
 

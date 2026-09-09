@@ -265,6 +265,74 @@ def test_g7_no_shipped_module_mentions_a_501_status():
         assert "501" not in text, f"{path.relative_to(ROOT)} names a 501 status"
 
 
+# ── G8 — every rendered line survives being read alone ───────────────────────
+
+#: A `**bold**` span and the text beside it are separate *runs*: that is how
+#: Markdown renders them, how renderers/docx.py emits them (a Word run with
+#: bold set, then a plain one), and how a reader skimming a memo takes them in.
+#: A claim is only negated if the negation reaches the run the claim is in —
+#: a negation stranded in a neighbouring run leaves the claim asserting itself.
+_BOLD_RUN = re.compile(r"(\*\*.*?\*\*)")
+_NEGATION = re.compile(r"\b(not|no|never|nor|neither)\b", re.I)
+_LEADING_DECORATION = re.compile(r"^[^0-9A-Za-z(]+")
+
+
+def _runs(line):
+    """The runs of a rendered line, decoration and emphasis markers stripped."""
+    parts = [p.strip(" *\t-•") for p in _BOLD_RUN.split(line)]
+    return [_LEADING_DECORATION.sub("", p).strip() for p in parts if p.strip(" *\t-•")]
+
+
+def _lines_added_by(rendering, baseline):
+    """The lines `rendering` has that the all-`None` `baseline` does not."""
+    absent = set(baseline.splitlines())
+    return [ln for ln in rendering.splitlines() if ln.strip() and ln not in absent]
+
+
+@pytest.mark.parametrize("flag", ALL_FLAGS)
+def test_g8_a_false_flag_never_leaves_the_affirmative_claim_unnegated(flag):
+    """
+    G8. Every line the negative branch renders must survive being read alone.
+
+    Through 0.2.1 the borrower certification block put the negation in a shared
+    header and reused the affirmative label list under it, so `is_cdfi_certified
+    =False` rendered `**Not certified:** CDFI Certified` — a sentence that
+    contradicts itself, and whose bolded run in the Word document reads "CDFI
+    Certified" directly beneath the borrower's name. `Minority Depository
+    Institution (MDI)` read acceptably under the same header only because it is
+    a bare noun phrase; the construction was wrong for any label carrying a past
+    participle, and one of the two did.
+
+    The affirmative claim is taken from the flag's `True` rendering, not from
+    any declaration the renderer reads, so the gate compares two independently
+    produced outputs.
+
+    Note this is a *run*-level property, not substring absence. The impact
+    section's negatives contain their affirmative label as a substring
+    ("Not a Low-Income Area") and are correct, because the negation sits in the
+    same run as the label; a naive substring check would red on them and be
+    wrong.
+
+    Red-proof (must fail): restore the header-plus-affirmative-label
+    construction in creditmemo/sections/borrower.py.
+    Observed: 2 failed (is_cdfi_certified, is_mdi).
+    """
+    unset = _render_with_flag(flag, None)
+    claims = {run for line in _lines_added_by(_render_with_flag(flag, True), unset)
+              for run in _runs(line)[-1:]}
+    assert claims, f"{flag}: True rendered no affirmative claim to compare against"
+
+    for line in _lines_added_by(_render_with_flag(flag, False), unset):
+        for run in _runs(line):
+            for claim in claims:
+                at = run.lower().find(claim.lower())
+                if at == -1:
+                    continue
+                assert _NEGATION.search(run[:at]), (
+                    f"{flag}: the negative rendering asserts {claim!r} in a run "
+                    f"that does not negate it: {run!r} (line: {line!r})")
+
+
 # ── Defects found while building the above, not named in the build prompt ────
 
 def test_a_supplied_zero_is_not_discarded_as_if_it_were_absent():

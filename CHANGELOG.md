@@ -8,7 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 Everything in this entry was measured on the code in this repository with the
 README quickstart deal, on Python 3.12 with python-docx 1.2.0, and the suite was
 re-run on 3.9, 3.10, 3.11, 3.12, 3.13 and 3.14. The suite goes from **86 tests
-to 143**. Every gate below was watched to fail against a deliberate mutation
+to 150**. Every gate below was watched to fail against a deliberate mutation
 before being trusted; the mutations are recorded in the gates' own docstrings.
 
 ### Fixed
@@ -128,6 +128,37 @@ A gate forbids that shape of sentence anywhere in the shipped package.
 `is_opportunity_zone`, `is_minority_borrower` and `is_women_borrower` change
 from `bool = False` to `Optional[bool] = None`. `True` renders the affirmative
 line as before, `False` renders an explicit negative, `None` renders nothing.
+
+**Each negative line negates itself.** The borrower certification block first
+rendered its negatives by reusing the affirmative label list under a negating
+header, so `is_cdfi_certified=False` produced
+
+    **Not certified:** CDFI Certified
+
+— a line that contradicts itself, and that reaches the Word document as the
+sentence `Not certified: CDFI Certified`. `Minority Depository Institution
+(MDI)` read acceptably under the same header only because it is a bare noun
+phrase; the construction was wrong for any label carrying a past participle,
+and one of the two did. Each certification flag now carries its own negative
+string and renders as a bullet, the same shape the impact section already
+used:
+
+    - ❌ Not CDFI certified
+    - ❌ Not a Minority Depository Institution (MDI)
+
+That also puts the certification block and the eligibility block two sections
+down into one visual language for what is the identical three-state idea. The
+block gains a `### Certifications & Designations` heading, which the bullets
+need and which the eligibility block already had.
+
+G6 did not catch this: it asserts the three renderings are **distinct**, which
+a self-contradicting sentence satisfies. G8 is the gate that reads the sentence
+the negative branch produces — for each of the seven flags it takes the
+affirmative claim from the flag's own `True` rendering and requires every run
+of the `False` rendering that asserts that claim to negate it in the same run.
+The property is run-level self-containment, not substring absence: the impact
+negatives contain their affirmative label as a substring and are correct,
+because the negation sits in the run with the label.
 
 **This is output-neutral for every existing caller who omits these fields**:
 they move from `False`-rendered-as-nothing to `None`-rendered-as-nothing, and a
