@@ -44,3 +44,42 @@ def test_recommendation_section(sample_deal):
     result = recommendation.generate(sample_deal)
     assert "IC Recommendation" in result
     assert "APPROVE" in result.upper()
+
+
+#: (ImpactData field, the value, the row the memo must show for it). Every
+#: optional Community Impact Metrics row, which between them were four of the
+#: five statements in impact.py that no test executed.
+IMPACT_ROWS = [
+    ("affordable_units",       24,     "| Affordable Units | 24 |"),
+    ("sq_ft_community_space",  12500.0, "| Community Space (sq ft) | 12,500 |"),
+    ("patients_served",        8500,   "| Patients Served | 8,500 |"),
+    ("students_served",        340,    "| Students Served | 340 |"),
+    ("businesses_supported",   12,     "| Businesses Supported | 12 |"),
+]
+
+
+@pytest.mark.parametrize("field,value,expected", IMPACT_ROWS,
+                         ids=[r[0] for r in IMPACT_ROWS])
+def test_every_optional_impact_metric_renders_its_row(sample_deal, field, value,
+                                                      expected):
+    """
+    The expected strings are written out rather than formatted with the
+    section's own f-string, for the reason ZERO_RENDERINGS is: a gate that
+    formats its expectation the way the code does follows the code anywhere.
+    The thousands separators are part of what is being checked.
+    """
+    from creditmemo.data.schema import ImpactData
+
+    supplied = ImpactData(**{field: value})
+    assert expected in impact.generate(_deal_with_impact(sample_deal, supplied))
+
+    absent = ImpactData()
+    assert expected not in impact.generate(_deal_with_impact(sample_deal, absent))
+
+
+def _deal_with_impact(deal, impact_data):
+    import copy
+
+    clone = copy.copy(deal)
+    clone.impact_data = impact_data
+    return clone

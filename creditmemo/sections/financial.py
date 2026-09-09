@@ -1,5 +1,5 @@
 """Financial Analysis section generator."""
-from creditmemo.data.schema import DealProfile
+from creditmemo.data.schema import DealProfile, _reject_fractional_ltv
 
 
 def _fmt(val, prefix="$", suffix="", divisor=1e6, decimals=2) -> str:
@@ -24,6 +24,20 @@ def generate(deal: DealProfile) -> str:
     consulted after three *other* fields had passed a truthiness test.
     """
     f = deal.financial_data
+
+    # R20. `FinancialData.__post_init__` checks this too, and that check is the
+    # better one: it fires at the caller's own line. It is not sufficient. A
+    # dataclass is not frozen, so
+    #
+    #     f = FinancialData()
+    #     f.ltv = 0.75            # read off a spreadsheet, field by field
+    #
+    # constructs without complaint and rendered `| Loan to Value | 0.8% |` —
+    # R14's defect verbatim, by the route an incremental build takes. Freezing
+    # the dataclass would close it and is a breaking change; validating where
+    # the number is about to be rendered closes it here. The Word renderer is a
+    # pure function of this Markdown, so one call covers both outputs.
+    _reject_fractional_ltv(f.ltv)
 
     lines = [
         "## Financial Analysis",

@@ -125,6 +125,11 @@ def has_separator_shape(line: str) -> bool:
     requirement does exclude is a block whose second line is ``| | | |`` — an
     all-empty row is not a valid delimiter, so that block has no delimiter and
     every line in it is content.
+
+    The ``not cells`` guard below cannot fire: :func:`split_row` always appends
+    its buffer and so returns at least one cell, and an empty line therefore
+    reaches the all-cells-non-empty test and fails there. It is kept as a
+    precondition on a function this module exports.
     """
     cells = split_row(line)
     if not cells:
@@ -206,6 +211,10 @@ def block_to_rows(block: Sequence[str]) -> List[List[str]]:
     a row is ragged; ragged input should not happen for memos built through
     :func:`escape_cell`, but dropping underwriter text is never the right
     failure mode.
+
+    The empty-``rows`` return cannot be reached through the renderers, for the
+    reason given on :func:`creditmemo.renderers.docx._add_table`; it is a
+    precondition on an exported helper, which callers may hand any block.
     """
     sep = separator_index(block)
     rows = [split_row(line) for i, line in enumerate(block) if i != sep]

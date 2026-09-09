@@ -327,11 +327,12 @@ def test_save_docx_reports_the_path(sample_deal, tmp_path, capsys):
 # 0.2.0's hand-built cover block did, and what they were built for.
 #
 # They are NOT the input-fidelity gate, and must not be relied on as one. The
-# normalisers below re-implement the renderer's own transformations: `_MD_NUMBER`
-# is character-for-character the `_ORDERED_ITEM` regex the renderer matched
-# with, and `_strip_emphasis` was the renderer's `.replace("*", "")`. So they
-# removed, on the Markdown side, exactly what the renderer destroyed on the Word
-# side, and both G1 variants stayed green while
+# normalisers below re-implement the renderer's own transformations:
+# `_strip_emphasis` was the renderer's `.replace("*", "")`, and until R17 a
+# `_MD_NUMBER = r"^\d+\.\s+(.*)$"` here was character-for-character the
+# `_ORDERED_ITEM` regex the renderer matched with. So they removed, on the
+# Markdown side, exactly what the renderer destroyed on the Word side, and both
+# G1 variants stayed green while
 #
 #     2019. The borrower refinanced its senior debt at 4.2%.
 #
@@ -353,7 +354,12 @@ def test_save_docx_reports_the_path(sample_deal, tmp_path, capsys):
 # as importing it, one release later.
 _MD_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
 _MD_BULLET = re.compile(r"^[-*]\s+(.*)$")
-_MD_NUMBER = re.compile(r"^\d+\.\s+(.*)$")
+#: There is deliberately no `_MD_NUMBER` here any more. R17 stopped the .docx
+#: renderer restyling ordered items, so an ordered line's number is now part of
+#: the paragraph text on both sides and there is nothing left to normalise away.
+#: Deleting the normaliser is what makes these gates able to see the number at
+#: all: with it in place, restoring `List Number` in the renderer left every
+#: gate in this module green.
 _MD_RULE = "---"
 
 
@@ -377,7 +383,7 @@ def _md_atoms(deal):
         line = payload
         if not line.strip() or line.strip() == _MD_RULE:
             continue
-        for pattern in (_MD_HEADING, _MD_BULLET, _MD_NUMBER):
+        for pattern in (_MD_HEADING, _MD_BULLET):
             match = pattern.match(line)
             if match:
                 line = match.groups()[-1]

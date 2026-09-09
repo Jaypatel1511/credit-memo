@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from creditmemo.data.schema import (
+    BORROWER_TYPES as BORROWER_TYPES_FOR_TEST,
     BorrowerProfile, DealProfile, FinancialData, ImpactData, LoanTerms,
     NMTCTerms, RiskFactor, SEVERITIES,
 )
@@ -99,6 +100,43 @@ def test_g4_the_severity_error_names_the_allowed_values():
         RiskFactor(category="C", description="d", severity="Critical", mitigant="m")
     for value in SEVERITIES:
         assert value in str(exc.value)
+
+
+#: Values that are not strings at all. `_normalise_choice` calls `.strip()` and
+#: `.lower()` on the candidate, so without the isinstance guard every one of
+#: these raises AttributeError from inside the schema instead of the ValueError
+#: that names the allowed vocabulary — and `None`, the likeliest of them by far
+#: for a field read out of a spreadsheet cell that was blank, is the one a
+#: caller is most likely to meet.
+NON_STRING_CHOICES = [None, 5, 0, True, ["nonprofit"], b"nonprofit", ("cdfi",)]
+
+
+@pytest.mark.parametrize("value", NON_STRING_CHOICES, ids=lambda v: repr(v))
+def test_g4_a_non_string_choice_is_refused_by_the_same_error(value):
+    """
+    Every validated enum field rejects a non-string with the ValueError that
+    names its vocabulary, not with an AttributeError from `.strip()`.
+
+    This is the branch of `_normalise_choice` that no test executed. It matters
+    because the error is the whole user interface of a validated field: a
+    caller who gets `AttributeError: 'NoneType' object has no attribute
+    'strip'` learns nothing about what the field wanted.
+    """
+    from creditmemo.data.schema import _normalise_choice
+
+    with pytest.raises(ValueError) as error:
+        _normalise_choice(value, BORROWER_TYPES_FOR_TEST, "borrower_type")
+    assert "borrower_type must be one of" in str(error.value)
+
+    with pytest.raises(ValueError) as error:
+        BorrowerProfile(name="N", borrower_type=value, sector="healthcare",
+                        state="IL", city="Chicago")
+    assert "borrower_type must be one of" in str(error.value)
+
+    with pytest.raises(ValueError) as error:
+        RiskFactor(category="Credit", description="d", severity=value,
+                   mitigant="m")
+    assert "severity must be one of" in str(error.value)
 
 
 def test_severity_vocabulary_is_still_three_levels():
@@ -477,21 +515,459 @@ def test_a_date_object_survives_both_renderers(tmp_path):
     assert any("2026-05-06" in p.text for p in doc.paragraphs)
 
 
-def test_conditions_use_words_list_number_style(tmp_path):
+# ── The README's table list is the memo's table list ─────────────────────────
+
+#: (the Markdown heading that introduces a table, the phrase README.md uses for
+#: it in the Word-output section). Written out here because it is the reviewed
+#: surface: a table added to the memo, or a phrase edited out of the README,
+#: has to appear as a diff in this file.
+DOCUMENTED_TABLES = [
+    ("### Deal Summary",                       "deal summary"),
+    ("### Proposed Terms",                     "proposed terms"),
+    ("### NMTC Structure",                     "NMTC structure"),
+    ("### Historical Financial Summary",       "historical financials"),
+    ("### Balance Sheet Summary (Most Recent)", "balance sheet summary"),
+    ("### Key Credit Metrics",                 "credit metrics"),
+    ("### Financial Projections",              "projections"),
+    ("### Community Impact Metrics",           "impact metrics"),
+    ("### High Risk Factors",                  "risk factors"),
+    ("### Approval",                           "IC signature block"),
+]
+
+
+def _fully_populated_deal():
+    """A deal that renders every table the package can render."""
+    return _deal(
+        loan_terms=LoanTerms(deal_type="nmtc", amount=2_500_000,
+                             interest_rate=0.045, term_years=10,
+                             min_dscr_covenant=1.20, max_ltv=0.75),
+        financials=FinancialData(
+            revenue_y1=2_800_000, revenue_y3=3_200_000,
+            total_assets=8_000_000, cash=450_000,
+            dscr=1.35, ltv=75.0, projected_dscr_y1=1.38),
+        impact=ImpactData(jobs_created=18),
+        risks=[RiskFactor(category="Credit", description="Concentration",
+                          severity="High", mitigant="Guaranty")],
+        nmtc_terms=NMTCTerms(
+            nmtc_allocation=10_000_000, credit_price=0.83,
+            leverage_loan_rate=0.045, qlici_a_rate=0.045, qlici_b_rate=0.0,
+            cde_fee_rate=0.02),
+        conditions=["Receipt of final appraisal"])
+
+
+def _table_headings(md):
+    """The heading above each Markdown table block, in document order."""
+    lines = md.split("\n")
+    headings = []
+    for i, line in enumerate(lines):
+        if not line.startswith("|"):
+            continue
+        if i and lines[i - 1].startswith("|"):
+            continue
+        j = i - 1
+        while j >= 0 and not lines[j].startswith("#"):
+            j -= 1
+        headings.append(lines[j] if j >= 0 else "(no heading)")
+    return headings
+
+
+def test_the_readme_names_every_table_the_memo_renders(tmp_path):
     """
-    Conditions of Approval arrived as ordinary paragraphs whose text began with
-    a literal "1. ", so Word saw no list: no renumbering, no indent, and the
-    numbers were part of the sentence.
+    The README enumerated nine tables in the Word-output section and the memo
+    renders ten: **Balance Sheet Summary** was missing from the list, and it is
+    the one an IC reads for the borrower's cash position. Nothing was wrong with
+    the code; a reader counting tables against the README would have concluded
+    one had been dropped.
+
+    Three things are checked together, because any one of them alone drifts:
+    the memo's own table headings, the count of real Word tables in the saved
+    .docx, and the README phrase for each.
+
+    Red-proof (must fail): delete "balance sheet summary" from the Word output
+    section of README.md.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 1 failed, 339 passed — "tables the README does not name:
+    ['### Balance Sheet Summary (Most Recent)']".
     """
-    docx = pytest.importorskip("docx")
-    deal = _deal(conditions=["Receipt of final appraisal", "Evidence of match"])
-    path = str(tmp_path / "conditions.docx")
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _fully_populated_deal()
+    md = CreditMemo(deal).to_markdown()
+    rendered = _table_headings(md)
+    declared = [heading for heading, _ in DOCUMENTED_TABLES]
+    assert rendered == declared, (
+        f"the memo's tables are not the ones this gate declares.\n"
+        f"rendered: {rendered}\ndeclared: {declared}")
+
+    path = str(tmp_path / "tables.docx")
     CreditMemo(deal).save_docx(path)
-    doc = docx.Document(path)
-    numbered = [p for p in doc.paragraphs if p.style.name == "List Number"]
-    assert [p.text for p in numbered] == ["Receipt of final appraisal",
-                                          "Evidence of match"]
-    assert not any(p.text.startswith("1. ") for p in doc.paragraphs)
+    assert len(_docx.Document(path).tables) == len(DOCUMENTED_TABLES), (
+        f"{len(_docx.Document(path).tables)} Word tables for "
+        f"{len(DOCUMENTED_TABLES)} Markdown tables")
+
+    readme = io.open(ROOT / "README.md", encoding="utf-8").read().lower()
+    unnamed = [heading for heading, phrase in DOCUMENTED_TABLES
+               if phrase.lower() not in readme]
+    assert not unnamed, f"tables the README does not name: {unnamed}"
+
+
+# ── Control characters: a refusal that names what it refused ─────────────────
+
+#: (label, the character, whether Word can store it). The accepted three are
+#: here so the gate cannot pass by refusing everything.
+CONTROL_CHARACTERS = [
+    ("vertical_tab",   "\x0b", False),
+    ("form_feed",      "\x0c", False),
+    ("nul",            "\x00", False),
+    ("bell",           "\x07", False),
+    ("escape",         "\x1b", False),
+    ("tab",            "\t",   True),
+    ("newline",        "\n",   True),
+    ("delete",         "\x7f", True),
+]
+
+
+@pytest.mark.parametrize("label,char,storable", CONTROL_CHARACTERS,
+                         ids=[c[0] for c in CONTROL_CHARACTERS])
+def test_a_control_character_is_refused_by_name_or_stored(
+    label, char, storable, tmp_path
+):
+    r"""
+    A control character in underwriter text is routine — `\x0b` and `\x0c` are
+    what a paste out of a PDF leaves behind — and `save_markdown` accepts them.
+    `save_docx` did not, and said so like this:
+
+        ValueError: All strings must be XML compatible: Unicode or ASCII,
+        no NULL bytes or control characters
+
+    raised from lxml, naming no field, no line, no character and no file, after
+    the caller had already been told the Markdown was written. The file is not
+    written either way; nothing is sanitised, because substituting or deleting a
+    character is the silent alteration this release exists to remove. What
+    changed is that the refusal now names the codepoint and the line.
+
+    The three storable characters are in the same parametrisation so that a
+    renderer which refused *everything* — or which sanitised, and so refused
+    nothing — cannot pass.
+
+    Red-proof (must fail): delete the `_reject_control_characters(lines)` call
+    from creditmemo/renderers/docx.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 5 failed, 335 passed — the five unstorable characters — each
+    raising lxml's unnamed message instead.
+    """
+    pytest.importorskip("docx")
+    deal = _deal(deal_summary=f"Sourced from the PDF{char}continued here.")
+    memo = CreditMemo(deal)
+
+    # The Markdown half takes it either way; that is the asymmetry.
+    memo.save_markdown(str(tmp_path / f"{label}.md"))
+
+    path = str(tmp_path / f"{label}.docx")
+    if storable:
+        memo.save_docx(path)
+        return
+    with pytest.raises(ValueError) as error:
+        memo.save_docx(path)
+    message = str(error.value)
+    assert f"U+{ord(char):04X}" in message, (
+        f"{label}: the refusal does not name the character: {message!r}")
+    assert "memo line" in message, (
+        f"{label}: the refusal does not say where: {message!r}")
+    assert "XML compatible" not in message, (
+        f"{label}: this is still lxml's unnamed message: {message!r}")
+
+
+# ── G13 — Word supplies no number, and loses none ────────────────────────────
+#
+# R17. 0.2.1 restyled every ordered-list line into Word's `List Number` style,
+# emitting only the text after the number and letting Word draw its own. The
+# test this replaces asserted exactly that, and passed. What it did not assert
+# is what Word then prints, and Word does not restart a list: every `List
+# Number` paragraph in a python-docx document inherits one continuous numbering
+# definition (`numId=5`, resolved from the style, with no paragraph-level
+# `w:numPr` anywhere to override it).
+#
+# Measured at 2031b0a on a deal with a two-item ordered list in `deal_summary`
+# and three `conditions`. The Markdown reads
+#
+#     1. Execute the loan agreement          <- deal_summary
+#     2. Fund the escrow
+#     1. Receipt of final appraisal          <- Conditions of Approval
+#     2. Evidence of matching funds
+#     3. Environmental review
+#
+# and the .docx holds five `List Number` paragraphs whose text has the number
+# stripped, all on the one definition. Word therefore prints the Conditions of
+# Approval as 3, 4, 5 — a numbered condition list, in an Investment Committee
+# memo, whose numbers are not the ones the memo's own Markdown states.
+#
+# The same restyling has a second route to the same class of loss. A condition
+# with an embedded newline:
+#
+#     conditions=["Receipt of appraisal",
+#                 "Payoff of the 2019 note\n3. Third-party report"]
+#
+# renders as a 1,2,3 run in the Markdown, and the caller's own literal "3." on
+# the continuation line is deleted on the way into Word. That made the claim in
+# `_ordered_item_lines` — "No input loses a number the caller wrote" — false as
+# written, by a route its run-of-1..n rule was not looking at.
+#
+# THE RULING (R17): ordered items are plain `Normal` paragraphs whose text
+# carries the number exactly as the Markdown has it. No `List Number` anywhere.
+# `List Bullet` stays: a bullet glyph carries no information, so letting Word
+# draw it substitutes nothing. A number is a value the underwriter wrote.
+#
+# The alternative — per-paragraph `w:numPr` with `w:startOverride` — would also
+# work and was rejected: it is raw OOXML surgery that would need auditing of its
+# own, against a governing principle that already says worst case a list loses
+# its styling, no case loses a number the caller wrote.
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+#: The one numbering format Word may supply on this package's behalf. A bullet
+#: glyph says what the "- " in the Markdown said; a numeral says something the
+#: Markdown may not say at all.
+PERMITTED_NUMFMT = "bullet"
+
+
+def _numbering_format(doc, paragraph):
+    """
+    What Word draws in the margin for `paragraph`, or None if it draws nothing.
+
+    Resolved the way Word resolves it: a paragraph-level `w:numPr` wins,
+    otherwise the style chain is walked to its base. The `w:numId` found is
+    mapped through `numbering.xml`'s `w:num` -> `w:abstractNum` -> first
+    `w:lvl` to the `w:numFmt` value — "bullet", "decimal", "lowerRoman", and so
+    on. Nothing here is imported from creditmemo; this reads the saved file.
+    """
+    num_id = None
+    pPr = paragraph._p.pPr
+    if pPr is not None:
+        num_pr = pPr.find(_W + "numPr")
+        if num_pr is not None and num_pr.find(_W + "numId") is not None:
+            num_id = num_pr.find(_W + "numId").get(_W + "val")
+    if num_id is None:
+        style = paragraph.style
+        while style is not None:
+            style_pPr = style.element.find(_W + "pPr")
+            if style_pPr is not None:
+                num_pr = style_pPr.find(_W + "numPr")
+                if num_pr is not None and num_pr.find(_W + "numId") is not None:
+                    num_id = num_pr.find(_W + "numId").get(_W + "val")
+                    break
+            style = style.base_style
+    if num_id is None:
+        return None
+    numbering = doc.part.numbering_part.element
+    for num in numbering.findall(_W + "num"):
+        if num.get(_W + "numId") != num_id:
+            continue
+        abstract_id = num.find(_W + "abstractNumId").get(_W + "val")
+        for abstract in numbering.findall(_W + "abstractNum"):
+            if abstract.get(_W + "abstractNumId") == abstract_id:
+                lvl = abstract.find(_W + "lvl")
+                if lvl is None:
+                    return None
+                fmt = lvl.find(_W + "numFmt")
+                return None if fmt is None else fmt.get(_W + "val")
+    return None
+
+
+#: The two shapes R17 was measured on, each as (label, DealProfile kwargs).
+#:
+#: The first is the blocking one: two independent ordered runs in one document,
+#: which is what makes Word's continuation visible. The second is the route
+#: through a caller string that carries its own newline and its own number.
+G13_DEALS = [
+    ("two_runs", dict(
+        deal_summary=("Closing sequence:\n"
+                      "1. Execute the loan agreement\n"
+                      "2. Fund the escrow"),
+        conditions=["Receipt of final appraisal",
+                    "Evidence of matching funds",
+                    "Environmental review"])),
+    ("embedded_number", dict(
+        conditions=["Receipt of appraisal",
+                    "Payoff of the 2019 note\n3. Third-party report"])),
+    ("chronology", dict(
+        deal_summary=("2019. The borrower refinanced its senior debt at 4.2%.\n"
+                      "2024. The borrower drew $1.2MM on the line."))),
+]
+
+
+@pytest.mark.parametrize("label,kwargs", G13_DEALS, ids=[d[0] for d in G13_DEALS])
+def test_g13_every_ordered_number_in_the_markdown_is_in_the_word_document(
+    label, kwargs, tmp_path
+):
+    r"""
+    G13, half one. Every line the Markdown begins with a number, the Word
+    document holds verbatim — number included, in a paragraph of its own.
+
+    Ground truth is the Markdown the same deal produces, not a list written out
+    here, and the comparison is of whole lines: a gate that compared only the
+    text after the number could not see the number go missing, which is the
+    blind spot the gate this replaces had.
+
+    Red-proof (must fail): restore 2031b0a's renderer whole —
+    `git show 2031b0a:creditmemo/renderers/docx.py > creditmemo/renderers/docx.py`
+    — which is the `List Number` branch with its run-of-1..n restriction.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed, with only the ordered-item branch put back and the rest of the
+    renderer left alone: 9 failed, 331 passed — 2 here (two_runs,
+    embedded_number), 2 in G13's other half, 1 in the declaration gate, and 4 in
+    tests/test_docx.py (G1 and G1-prose, loan and nmtc). Reverting the whole
+    file to 2031b0a gives 14 failed, 326 passed; the extra 5 are the
+    control-character gate, whose check the same revert removes.
+
+    `chronology` stays green under that mutation and is not slack: 2031b0a's
+    run-of-1..n rule deliberately left it alone, so it is the shape that
+    distinguishes that restriction from the unrestricted branch of 0.2.0, which
+    reddens all three.
+
+    At 2031b0a, with `List Number` live, the suite was 284 passed. No gate that
+    existed before this round fails on the restoration, and the one gate that
+    named the style asserted its presence — which is why the defect shipped as
+    far as it did.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _deal(**kwargs)
+    md = CreditMemo(deal).to_markdown()
+    ordered = [line for line in md.split("\n")
+               if re.match(r"^\d+\.\s", line)]
+    assert ordered, f"{label}: no ordered line in the Markdown — gate is vacuous"
+
+    path = str(tmp_path / f"{label}.docx")
+    CreditMemo(deal).save_docx(path)
+    doc = _docx.Document(path)
+    paragraphs = [p.text for p in doc.paragraphs]
+
+    for line in ordered:
+        assert line in paragraphs, (
+            f"{label}: the Markdown line {line!r} is not a paragraph of the "
+            f"Word document. Word document paragraphs beginning with a digit: "
+            f"{[p for p in paragraphs if p[:1].isdigit()]}")
+
+
+@pytest.mark.parametrize("label,kwargs", G13_DEALS, ids=[d[0] for d in G13_DEALS])
+def test_g13_word_supplies_no_number_in_the_document(label, kwargs, tmp_path):
+    """
+    G13, half two. No paragraph in the document gets its number from Word.
+
+    Half one would still pass if the renderer both kept the number in the text
+    *and* put the paragraph on a numbered list definition — the reader would
+    then see "1. 1. Execute the loan agreement", or worse, "3. 1. Receipt of
+    final appraisal". So the numbering definition every paragraph resolves to is
+    read out of the saved file and required to draw a bullet or nothing.
+
+    Red-proof (must fail): restore 2031b0a's renderer whole —
+    `git show 2031b0a:creditmemo/renderers/docx.py > creditmemo/renderers/docx.py`.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 9 failed, 331 passed; 2 of them here — two_runs and
+    embedded_number — each naming numFmt='decimal' on the paragraphs Word
+    would have numbered itself.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _deal(**kwargs)
+    path = str(tmp_path / f"{label}-numbering.docx")
+    CreditMemo(deal).save_docx(path)
+    doc = _docx.Document(path)
+
+    supplied = [(p.style.name, p.text, _numbering_format(doc, p))
+                for p in doc.paragraphs
+                if _numbering_format(doc, p) not in (None, PERMITTED_NUMFMT)]
+    assert not supplied, (
+        f"{label}: Word supplies the number for these paragraphs: {supplied}")
+
+
+def test_g13_is_not_vacuous(tmp_path):
+    """
+    Guard the guard, twice over.
+
+    `_numbering_format` has to be able to *see* a Word-supplied number, or half
+    two passes on any document at all. So a `List Number` paragraph is built
+    here directly with python-docx — outside the package — and the helper is
+    required to report a non-bullet format for it, and "bullet" for a
+    `List Bullet` one.
+
+    And the memo really does put bullets on the bullet style, so "no numbering"
+    is not being satisfied by the renderer having stopped styling lists at all.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    probe = _docx.Document()
+    probe.add_paragraph("a number", style="List Number")
+    probe.add_paragraph("a bullet", style="List Bullet")
+    probe_path = str(tmp_path / "probe.docx")
+    probe.save(probe_path)
+    probe = _docx.Document(probe_path)
+    formats = [_numbering_format(probe, p) for p in probe.paragraphs]
+    assert formats[0] not in (None, PERMITTED_NUMFMT), (
+        f"the helper cannot see a Word-supplied number: {formats[0]!r}")
+    assert formats[1] == PERMITTED_NUMFMT, (
+        f"the helper does not recognise a bullet: {formats[1]!r}")
+
+    deal = _deal(conditions=["Receipt of final appraisal", "Evidence of match"])
+    path = str(tmp_path / "bullets.docx")
+    CreditMemo(deal).save_docx(path)
+    doc = _docx.Document(path)
+    assert any(_numbering_format(doc, p) == PERMITTED_NUMFMT
+               for p in doc.paragraphs), (
+        "no bulleted paragraph in the memo — half two would pass vacuously")
+
+
+def test_g13_no_shipped_module_asks_word_for_a_number():
+    """
+    G13's declaration half: the ruling, stated where a reader of the renderer
+    will meet it, and pinned so that reintroducing the style is a visible diff
+    in this file rather than a silent one in the renderer.
+    """
+    from creditmemo.renderers import docx as docx_renderer
+
+    import ast
+
+    assert docx_renderer.BULLET_STYLE == "List Bullet"
+    assert not hasattr(docx_renderer, "NUMBER_STYLE"), (
+        "the renderer declares a numbered list style again — see R17")
+
+    # String *constants*, not source text: R17 is a ruling worth writing down,
+    # and the renderer's own docstring names the style in order to say why it
+    # is gone. A prose mention is the record; a live literal is the defect. So
+    # docstrings are subtracted and comments never enter the AST at all.
+    live = []
+    for path in _package_sources():
+        tree = ast.parse(io.open(path, encoding="utf-8").read())
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None)
+                if (body and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)):
+                    docstrings.add(id(body[0].value))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in docstrings
+                    and "List Number" in node.value):
+                live.append(f"{path.name}:{node.lineno}")
+    assert not live, (
+        f"a shipped module has a live 'List Number' string literal: {live} "
+        f"— see R17")
 
 
 def test_section_rules_are_word_borders_not_rows_of_underscores(tmp_path):
@@ -632,7 +1108,7 @@ ZERO_RENDERINGS = [
     ("loan_terms",     "term_years",           0,   "0 years"),
     ("loan_terms",     "amortization_years",   0,   "0 years"),
     ("loan_terms",     "min_dscr_covenant",    0.0, "Minimum DSCR of 0.00x"),
-    ("loan_terms",     "max_ltv",              0.0, "Maximum LTV of 0%"),
+    ("loan_terms",     "max_ltv",              0.0, "Maximum LTV of 0.0%"),
     ("borrower",       "year_founded",         0,   "**Year Founded:** 0"),
     ("borrower",       "total_assets",         0.0, "**Total Assets:** $0.0MM"),
     ("borrower",       "annual_revenue",       0.0, "**Annual Revenue:** $0.0MM"),
@@ -834,6 +1310,125 @@ def test_g9_the_optional_string_rule_is_stated():
     assert "### Mission" not in md, "an empty mission produced a bare heading"
 
 
+def _optional_str_fields():
+    """
+    Every `Optional[str]` field in the schema, as (dataclass name, field name).
+
+    Discovered from the annotations, not listed: a new optional string field is
+    covered by the gate below the moment it is declared, without anyone
+    remembering to add it here.
+    """
+    import dataclasses
+    import typing
+
+    from creditmemo.data import schema as schema_module
+
+    found = []
+    for name in dir(schema_module):
+        obj = getattr(schema_module, name)
+        if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
+            continue
+        hints = typing.get_type_hints(obj)
+        for f in dataclasses.fields(obj):
+            t = hints[f.name]
+            args = typing.get_args(t)
+            if (typing.get_origin(t) is typing.Union
+                    and type(None) in args and str in args):
+                found.append((name, f.name))
+    return sorted(found)
+
+
+def _deal_with_string(cls_name, field, value):
+    """A deal whose only unusual input is `cls_name.field = value`."""
+    borrower_kw = dict(name="Test Borrower", borrower_type="nonprofit",
+                       sector="healthcare", state="IL", city="Chicago")
+    loan_kw = dict(deal_type="loan", amount=2_500_000, interest_rate=0.045,
+                   term_years=10)
+    impact_kw = {}
+    nmtc_kw = dict(nmtc_allocation=10_000_000, credit_price=0.83,
+                   leverage_loan_rate=0.045, qlici_a_rate=0.045,
+                   qlici_b_rate=0.0, cde_fee_rate=0.02)
+    deal_kw = dict(deal_name="Test Deal", recommendation="approve_conditions",
+                   prepared_by="Jay Patel", prepared_date="2026-05-06",
+                   fund_name="Test Fund", ic_date="2026-06-01",
+                   deal_summary="A summary.",
+                   conditions=["Receipt of final appraisal"], risks=[])
+    target = {"BorrowerProfile": borrower_kw, "LoanTerms": loan_kw,
+              "ImpactData": impact_kw, "NMTCTerms": nmtc_kw,
+              "DealProfile": deal_kw}[cls_name]
+    target[field] = value
+    return DealProfile(
+        borrower=BorrowerProfile(**borrower_kw),
+        loan_terms=LoanTerms(**loan_kw),
+        financial_data=FinancialData(dscr=1.35),
+        impact_data=ImpactData(**impact_kw),
+        nmtc_terms=NMTCTerms(**nmtc_kw),
+        **deal_kw)
+
+
+@pytest.mark.parametrize("cls_name,field", _optional_str_fields(),
+                         ids=lambda v: v)
+def test_g9_an_empty_optional_string_renders_as_absence(cls_name, field):
+    """
+    G9's string half, applied to every `Optional[str]` field rather than to
+    `mission` alone.
+
+    THE PROPERTY, and the reason it is stated this way: a field set to `""`
+    must produce a memo byte-identical to the same field left `None`. That is
+    what "the package treats an empty string as absence" means, and it is
+    checked against rendered output rather than against `fields.is_supplied`,
+    so a section that reaches its own conclusion about `""` — by a bare
+    `is not None`, or by an `or`-fallback, or by anything else — is caught
+    whichever mechanism it used. Nothing here asserts *how* a section decides.
+
+    R18. The gate this replaces exercised `mission` and nothing else, and
+    `mission` was one of the fields that was already right. `closing_date` and
+    `maturity_date` were tested with a bare `is not None` in
+    sections/transaction.py, so `closing_date=""` rendered
+
+        | Anticipated Closing |  |
+
+    — a labelled row of the Proposed Terms table with no value in it — while
+    the README, `fields.is_supplied`'s docstring, the CHANGELOG and this gate's
+    own `ZERO_EXEMPT_OPTIONAL` all stated that `""` is absence. Four documents
+    were right and the code was wrong; the code moved.
+
+    Red-proof (must fail): restore `if lt.closing_date is not None:` in
+    creditmemo/sections/transaction.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 1 failed, 339 passed — LoanTerms.closing_date, showing the empty
+    row. Restoring both lines: 2 failed, 338 passed.
+    """
+    empty = CreditMemo(_deal_with_string(cls_name, field, "")).to_markdown()
+    absent = CreditMemo(_deal_with_string(cls_name, field, None)).to_markdown()
+    assert empty == absent, (
+        f"{cls_name}.{field}: an empty string renders differently from an "
+        f"absent one.\nOnly in the empty rendering: "
+        f"{sorted(set(empty.split(chr(10))) - set(absent.split(chr(10))))}")
+
+
+def test_g9_the_empty_string_gate_is_not_vacuous():
+    """
+    Guard the guard. The gate above compares two renderings, so it would pass
+    on a package that rendered nothing at all, or on a field the memo never
+    shows. Both are ruled out here: every field it covers must reach the memo
+    when it holds a real value, and the covered set must be non-empty.
+    """
+    covered = _optional_str_fields()
+    assert covered, "no Optional[str] fields found — the gate is vacuous"
+    unreachable = []
+    for cls_name, field in covered:
+        token = "SENTINELVALUE"
+        md = CreditMemo(_deal_with_string(cls_name, field, token)).to_markdown()
+        if token not in md:
+            unreachable.append(f"{cls_name}.{field}")
+    assert not unreachable, (
+        f"the empty-string gate covers fields the memo never renders, so it "
+        f"cannot see them change: {unreachable}")
+
+
 # ── G10 — revenue_trend, the memo's one automated analytical claim ────────────
 #
 # R7/F2. `schema.py` gated the property on `if self.revenue_y1 and
@@ -963,11 +1558,15 @@ def test_g10_the_trend_property_does_not_divide():
 #: appear unchanged in the Markdown. They have their own positional gates in
 #: tests/test_docx.py (test_pipe_in_underwriter_text_survives_to_the_docx).
 #:
-#: It also does not *begin* with "#", "- ", "* " or "1. ". A line that begins
-#: with a real Markdown block marker is restyled into the Word equivalent of
-#: that marker — a heading, a bullet, a numbered item — which is the deferral
-#: CHANGELOG.md discloses. That class replaces a marker with its equivalent;
-#: "2019." was replaced with a different number, which is why it is here.
+#: It also does not *begin* with "#", "- " or "* ". A line that begins with a
+#: real Markdown block marker is restyled into the Word equivalent of that
+#: marker — a heading, a bullet — which is the deferral CHANGELOG.md discloses.
+#: That class replaces a marker with its equivalent; "2019." was replaced with a
+#: different number, which is why it is here.
+#:
+#: "1. " is no longer in that list. R17 stopped ordered lines being restyled at
+#: all, so a leading "1. " is now content like any other text and G13 gates it
+#: directly.
 SENTINEL_SHAPE = "2019. {token} margin improved 5 * 3 bps # not a heading"
 
 #: Every free-text string a caller can put on a DealProfile, keyed by
@@ -1154,6 +1753,28 @@ def test_g11_covers_every_free_text_field_on_every_dataclass():
     Guard the guard. Every `str`/`Optional[str]` field on every dataclass in the
     schema — and every list-of-string field — is either given a sentinel or
     named as a validated enum. A field added without a decision reds here.
+
+    R19. The list half of that claim used to be spelled `or f.name ==
+    "conditions"`: the docstring said "every list-of-string field" and the code
+    named one field. Adding `covenants: list = field(default_factory=list)` to
+    DealProfile left the suite green, and the field reached neither rendering.
+    Lists are now classified by what they hold, so the claim and the check are
+    the same statement:
+
+      * a list whose element type is `str` is caller text and needs a sentinel;
+      * a list of anything else is covered through that thing's own fields
+        (`risks` is `List[RiskFactor]`, and RiskFactor's three strings are in
+        G11_FIELDS);
+      * a bare `list`, with no element type, is undecided and reds here until
+        someone decides.
+
+    Red-proof (must fail): add `covenants: list = field(default_factory=list)`
+    to DealProfile in creditmemo/data/schema.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 1 failed, 339 passed — "free-text fields with no G11 decision:
+    [('DealProfile', 'covenants')]".
     """
     import dataclasses
     import typing
@@ -1171,7 +1792,10 @@ def test_g11_covers_every_free_text_field_on_every_dataclass():
             args = typing.get_args(t)
             is_text = t is str or (typing.get_origin(t) is typing.Union
                                    and str in args)
-            if is_text or f.name == "conditions":
+            # A list of strings, or a list that has not said what it holds.
+            is_text_list = ((t is list or typing.get_origin(t) is list)
+                            and (not args or str in args))
+            if is_text or is_text_list:
                 text_fields.add((name, f.name))
 
     assert text_fields, "no text fields found — this gate would pass vacuously"
@@ -1349,6 +1973,124 @@ def test_g12_holds_in_the_word_document_too(tmp_path):
         + [c.text for t in document.tables for r in t.rows for c in r.cells])
     assert "75" in text
     assert "0.8%" not in text, "the fraction rendering survived into the .docx"
+
+
+#: The values a caller reading a spreadsheet row might assign after building
+#: the object, and what each must do. The band is the same one the constructor
+#: refuses; the point of the list is that the *route* is different.
+POST_CONSTRUCTION_LTV = [
+    (0.75, "raises"),   # the R14 defect verbatim: rendered as 0.8%
+    (0.8,  "raises"),   # and the CHANGELOG's own counter-example
+    (1.0,  "raises"),   # the top of the band
+    (0.0,  "renders"),  # the one value both conventions agree on
+    (75.0, "renders"),  # the documented scale
+    (100.0, "renders"),
+    (None, "renders"),
+]
+
+
+@pytest.mark.parametrize("value,outcome", POST_CONSTRUCTION_LTV,
+                         ids=lambda v: str(v))
+def test_g12_a_post_construction_ltv_is_refused_at_the_render_boundary(
+    value, outcome, tmp_path
+):
+    """
+    G12 addendum, R20. The scale check is on the value that gets rendered, not
+    only on the value that gets constructed.
+
+    `FinancialData` is a plain dataclass, so `__post_init__` sees only what the
+    constructor was handed. Measured at 2031b0a:
+
+        f = FinancialData()
+        f.ltv = 0.75            # nothing raises
+        CreditMemo(deal).to_markdown()
+        -> | Loan to Value | 0.8% | <= 80% |
+
+    which is R14's defect, unaltered, reached by assembling the object field by
+    field — the shape you get reading a spreadsheet row, and the shape a caller
+    who hit the constructor's error message would most naturally fall back to.
+    Freezing the dataclass would also close it, and is a breaking change that
+    this round rules out of scope.
+
+    Both renderings are exercised, because a check in only one of them would
+    leave the .docx path — which is where every defect of this class in 0.2.0
+    lived — unguarded.
+
+    Red-proof (must fail): delete the `_reject_fractional_ltv(f.ltv)` call from
+    creditmemo/sections/financial.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 3 failed, 337 passed — the three values in the band — each
+    reporting "DID NOT RAISE".
+    """
+    pytest.importorskip("docx")
+    financials = FinancialData()
+    financials.ltv = value
+    memo = CreditMemo(_deal(financials=financials))
+
+    if outcome == "raises":
+        with pytest.raises(ValueError) as markdown_error:
+            memo.to_markdown()
+        assert "percentage points" in str(markdown_error.value)
+        with pytest.raises(ValueError):
+            memo.save_docx(str(tmp_path / "ltv.docx"))
+        return
+
+    md = memo.to_markdown()
+    assert "| Loan to Value |" in md
+    memo.save_docx(str(tmp_path / "ltv.docx"))
+
+
+def test_g12_the_constructor_check_still_fires_first():
+    """
+    Guard the guard for the addendum above. The render-boundary call is an
+    addition, not a replacement: a bad `ltv` passed to the constructor must
+    still fail there, where the traceback points at the caller's own line
+    rather than at a section generator.
+    """
+    with pytest.raises(ValueError) as error:
+        FinancialData(ltv=0.75)
+    assert "percentage points" in str(error.value)
+
+
+def test_g12_max_ltv_renders_at_the_same_precision_as_the_ltv_it_caps():
+    """
+    R23. `max_ltv` rendered `.0f` while `FinancialData.ltv` renders `.1f`, so a
+    `max_ltv=0.795` covenant printed as
+
+        - Maximum LTV of 80%
+
+    — a covenant reported looser than the borrower agreed to, at a value
+    plausible enough that nobody would query it, in the section an IC reads to
+    learn the terms. The two fields describe the same quantity and are read
+    against each other; they now print at the same precision.
+
+    The expected strings are written out rather than produced with the
+    renderer's own format spec, for the reason ZERO_RENDERINGS is: a gate that
+    formats its expectation the way the code does follows the code anywhere.
+
+    Red-proof (must fail): restore `{lt.max_ltv*100:.0f}%` in
+    creditmemo/sections/transaction.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 2 failed, 338 passed — this gate, showing "Maximum LTV of 80%"
+    for max_ltv=0.795, and G9's `max_ltv` zero row, which pins the same
+    formatter at "Maximum LTV of 0.0%".
+    """
+    for value, expected in ((0.795, "Maximum LTV of 79.5%"),
+                            (0.75, "Maximum LTV of 75.0%"),
+                            (0.804, "Maximum LTV of 80.4%")):
+        md = CreditMemo(_deal(loan_terms=LoanTerms(
+            deal_type="loan", amount=2_500_000, max_ltv=value))).to_markdown()
+        assert expected in md, (
+            f"max_ltv={value}: expected {expected!r}; the covenant lines are "
+            f"{[l for l in md.split(chr(10)) if 'Maximum LTV' in l]}")
+
+    # And the rounding really was hiding something: at .0f these three
+    # different covenants printed as two.
+    assert len({f"{v*100:.0f}" for v in (0.795, 0.804)}) == 1
 
 
 def test_g12_documents_the_unit_on_every_rate_and_ratio_field():

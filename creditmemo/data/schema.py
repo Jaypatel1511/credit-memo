@@ -3,7 +3,7 @@ Core dataclasses for credit memo inputs.
 Covers CDFI loans, NMTC deals, equity investments, and grants.
 """
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 
 # ── Deal Types ────────────────────────────────────────────────────────────────
@@ -83,9 +83,22 @@ def _reject_fractional_ltv(value: Optional[float]) -> None:
     fails loudly instead. No interpretation is applied: ``<= 1.0 means a
     fraction`` would be a silent guess, and a 100% LTV is real. ``0.0`` is
     exempt because it is the one value the two conventions render identically,
-    and R6 requires a supplied zero to reach the memo. Gated by G12.
+    and R6 requires a supplied zero to reach the memo — the band below is open
+    at the bottom (``0 < value``), which is that exemption, expressed once.
+
+    R22: through 0.2.1 the exemption was *also* written as a ``value == 0``
+    early return above the band. It could never fire, because the band already
+    excluded zero, and deleting it left the suite at 284 passed. The docstring
+    described it as the thing keeping zero out; it was not.
+
+    Called from two places, and both are load-bearing (R20). ``__post_init__``
+    catches the mistake at construction, where the traceback points at the
+    caller's own line. :func:`creditmemo.sections.financial.generate` catches it
+    at the render boundary, where a ``FinancialData`` assembled field by field
+    — the shape you get reading a spreadsheet row into an object — reaches the
+    memo. Gated by G12.
     """
-    if value is None or value == 0:
+    if value is None:
         return
     if 0 < value <= LTV_FRACTION_BAND_MAX:
         raise ValueError(
@@ -342,8 +355,13 @@ class DealProfile:
     prepared_by: str
     prepared_date: str
     nmtc_terms: Optional[NMTCTerms] = None
-    risks: list = field(default_factory=list)
-    conditions: list = field(default_factory=list)
+    #: The element type is stated, and it is load-bearing rather than
+    #: decorative: G11's coverage guard classifies a list field by what it
+    #: holds. A bare `list` is unclassified and reds there until someone
+    #: decides whether its contents are caller-supplied text that has to
+    #: survive into both renderings. See R19.
+    risks: List[RiskFactor] = field(default_factory=list)
+    conditions: List[str] = field(default_factory=list)
     fund_name: Optional[str] = None
     ic_date: Optional[str] = None
     deal_summary: Optional[str] = None

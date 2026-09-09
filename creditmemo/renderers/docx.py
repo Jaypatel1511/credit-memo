@@ -6,70 +6,56 @@ from creditmemo.renderers.markdown import render as render_markdown
 from creditmemo.tables import block_to_rows, iter_segments
 from creditmemo.text import strip_emphasis
 
+#: The characters XML 1.0 forbids in character data, which is what a .docx
+#: part is. Measured against python-docx rather than read off the spec: every
+#: codepoint in this class was fed through ``Document.add_paragraph`` and
+#: ``save`` and rejected, and ``\t``, ``\n``, ``\r`` and ``\x7f`` were fed
+#: through and accepted. Control characters arrive in this package routinely —
+#: a vertical tab or a form feed is what a paste out of a PDF leaves behind.
+_XML_FORBIDDEN = re.compile(
+    "[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _reject_control_characters(lines) -> None:
+    """
+    Raise a ValueError naming the character and the line that carries it.
+
+    ``save_markdown`` accepts these characters and ``save_docx`` did not: the
+    same DealProfile wrote one file and raised on the other with lxml's
+
+        ValueError: All strings must be XML compatible: Unicode or ASCII,
+        no NULL bytes or control characters
+
+    which names no field, no line, no character and no file, and arrives after
+    the caller has already been told the Markdown was fine. Nothing is
+    sanitised — deleting or substituting a character is the silent alteration
+    this release exists to remove — but the refusal now says what to fix.
+    """
+    for number, line in enumerate(lines, 1):
+        match = _XML_FORBIDDEN.search(line)
+        if match is None:
+            continue
+        char = match.group()
+        raise ValueError(
+            f"Word cannot store the character U+{ord(char):04X} that appears "
+            f"at position {match.start()} of memo line {number}: {line!r}. "
+            f"Control characters are routine in text pasted out of a PDF and "
+            f"are not valid in a .docx; remove it from the input field it came "
+            f"from. (save_markdown accepts it — only Word does not.)"
+        )
+
+
 #: Word style used for every generated table. "Table Grid" ships with the
 #: default python-docx template, so no external template is required. The
 #: README documents this style and the bold header row; both are gated.
 TABLE_STYLE = "Table Grid"
 
-#: Word's built-in list styles, used instead of literal list markers in body
-#: text. Before 0.2.1 the Conditions of Approval arrived as ordinary paragraphs
-#: whose text began with a literal "1. ", so Word saw no list at all.
+#: Word's built-in bullet style. Unordered items are restyled into it because a
+#: bullet glyph carries no information: whatever Word draws in the margin says
+#: the same thing the "- " in the Markdown said.
+#:
+#: There is deliberately no numbered counterpart. See :func:`render`.
 BULLET_STYLE = "List Bullet"
-NUMBER_STYLE = "List Number"
-
-#: A line that has the shape of a Markdown ordered-list item:
-#: "1. Receipt of final appraisal". Shape alone does not make it one — see
-#: :func:`_ordered_item_lines`.
-_ORDERED_ITEM = re.compile(r"^(\d+)\.\s+(.*)$")
-
-
-def _ordered_item_lines(lines):
-    """
-    Decide, for each line with the shape of an ordered-list item, whether it
-    really is one. Returns those decisions in document order.
-
-    A line becomes a Word ``List Number`` item only if it belongs to a run of
-    ordered-item lines — separated by nothing but blank lines — whose numbers
-    are exactly 1, 2, 3, ... n. Anything else is emitted verbatim as body
-    text, with the number the underwriter wrote still in it.
-
-    Through 0.2.1 the renderer matched this shape against any line and emitted
-    only the text after the number, letting Word supply its own "1.". A
-    chronology written as::
-
-        2019. The borrower refinanced its senior debt at 4.2%.
-        2024. The borrower drew $1.2MM on the line.
-
-    reached the Investment Committee as items 1. and 2. — the only defect of
-    this class that both destroyed content and substituted a false value in
-    its place. It is silent: the file saves and reports success.
-
-    The rule fails toward preserving content. Its worst case is a genuine
-    ordered list that does not start at 1, or whose items are separated by
-    prose, losing its Word list styling and reading as ordinary paragraphs
-    with their numbers intact. No input loses a number the caller wrote.
-    Gated by G11.
-    """
-    decisions = []
-    run = []
-
-    def flush():
-        numbers = [n for n, _ in run]
-        ok = numbers == list(range(1, len(numbers) + 1))
-        for _, at in run:
-            decisions[at] = ok
-        run.clear()
-
-    for line in lines:
-        match = _ORDERED_ITEM.match(line)
-        if match:
-            run.append((int(match.group(1)), len(decisions)))
-            decisions.append(False)
-            continue
-        if line.strip():
-            flush()
-    flush()
-    return decisions
 
 
 def _clean(text: str) -> str:
@@ -119,7 +105,20 @@ def _add_rule(doc) -> None:
 
 
 def _add_table(doc, block) -> None:
-    """Append one Markdown table block to ``doc`` as a real Word table."""
+    """
+    Append one Markdown table block to ``doc`` as a real Word table, followed by
+    an empty paragraph.
+
+    That trailing paragraph is the one thing this renderer emits that is not a
+    line of the Markdown: it is the blank line the Markdown has after every
+    table, which the text path drops because a blank line adds no paragraph.
+    Word runs a table and the next heading together without it.
+
+    The ``not rows`` guard below is defensive and cannot fire through
+    :func:`render`: ``iter_segments`` only calls a block a table when it has a
+    delimiter rule, which needs at least two lines, and ``block_to_rows`` drops
+    exactly one of them.
+    """
     rows = block_to_rows(block)
     if not rows:
         return
@@ -144,7 +143,37 @@ def render(deal: DealProfile, path: str) -> None:
 
     The document is a pure function of the Markdown the same deal produces:
     every heading, paragraph, list item, rule and table in the .docx comes from
-    a line of that Markdown, and nothing is added that has no line behind it.
+    a line of that Markdown, and nothing carrying text is added that has no line
+    behind it. The one addition is an empty spacer paragraph after each table —
+    see :func:`_add_table`.
+
+    ORDERED LISTS ARE NOT RESTYLED (R17). A line the Markdown begins with a
+    number becomes a plain ``Normal`` paragraph whose text still carries that
+    number. There is no ``List Number`` here, and no ``w:numPr``: nothing in
+    this document asks Word to supply a number, because Word will not supply
+    the number the Markdown states.
+
+    0.2.1 did restyle them, and that is the defect this reverts. Word does not
+    restart a numbered list on its own: every ``List Number`` paragraph
+    python-docx creates resolves to one continuous numbering definition. A memo
+    with a two-item ordered list in ``deal_summary`` and three ``conditions``
+    reads 1,2 then 1,2,3 in the Markdown and printed the Conditions of Approval
+    as **3, 4, 5** in Word. The same restyling deleted a caller's own literal
+    number outright when a condition carried an embedded newline::
+
+        conditions=["Receipt of appraisal",
+                    "Payoff of the 2019 note\n3. Third-party report"]
+
+    0.2.1 guarded against a nearby defect of 0.2.0 — a chronology written as
+    ``2019. ...`` / ``2024. ...`` reaching the Investment Committee as items 1.
+    and 2. — with a rule that only restyled a run numbered exactly 1..n. That
+    rule is gone too, and with it the class: nothing is restyled, so nothing
+    can be renumbered. The cost is that a genuine ordered list reads as ordinary
+    paragraphs with their numbers intact, which is the direction this package
+    fails in on purpose. Gated by G13.
+
+    Unordered items keep ``List Bullet``: a bullet glyph carries no
+    information, so letting Word draw it substitutes nothing for something.
 
     Before 0.2.1 the renderer built a cover block by hand — a ``Title``
     paragraph, an ``H1`` of the deal name and a four-row metadata table read
@@ -175,12 +204,9 @@ def render(deal: DealProfile, path: str) -> None:
     md_content = render_markdown(deal)
     lines = md_content.split("\n")
 
-    # Which ordered-item-shaped lines are really list items has to be decided
-    # over the whole document, not line by line, so it is decided up front. The
-    # decisions come back in document order, one per matching line; a table line
-    # begins with "|" and so can never match, which is why walking them off a
-    # single iterator stays in step with iter_segments below.
-    numbered = iter(_ordered_item_lines(lines))
+    # Before anything is built, so the refusal names the problem instead of
+    # arriving from lxml halfway through a document that is then not written.
+    _reject_control_characters(lines)
 
     # iter_segments groups contiguous table lines into blocks and hands back
     # everything else line by line, in order. It is the same grouping the
@@ -210,14 +236,6 @@ def render(deal: DealProfile, path: str) -> None:
             _add_rule(doc)
         elif line.startswith("- ") or line.startswith("* "):
             doc.add_paragraph(_clean(line[2:]), style=BULLET_STYLE)
-        elif _ORDERED_ITEM.match(line):
-            if next(numbered):
-                doc.add_paragraph(_clean(_ORDERED_ITEM.match(line).group(2)),
-                                  style=NUMBER_STYLE)
-            else:
-                # Not a list item — a sentence that begins with a number the
-                # underwriter wrote. Emitted whole, number included.
-                doc.add_paragraph(_clean(line))
         elif line:
             clean = _clean(line)
             if clean.strip():

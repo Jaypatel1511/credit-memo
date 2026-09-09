@@ -6,11 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 ## [0.2.1] — 2026-09-08
 
 Everything in this entry was measured on the code in this repository with the
-README quickstart deal, on Python 3.12 with python-docx 1.2.0, and the suite was
-re-run on 3.9, 3.10, 3.11, 3.12, 3.13 and 3.14. The suite goes from **86 tests
-to 284**. Every gate below was watched to fail against a deliberate mutation
-before being trusted; the mutations are recorded in the gates' own docstrings,
-with the count that reddened.
+README quickstart deal, on Python 3.12 with python-docx 1.2.0. CI runs the suite
+on 3.9, 3.10, 3.11, 3.12, 3.13 and 3.14 -- the matrix used to stop at 3.12 while
+this line claimed six versions and `requires-python` admitted all six; the
+matrix moved. The suite goes from **86 tests to 340**. Every gate below was
+watched to fail against a deliberate mutation before being trusted; the
+mutations are recorded in the gates' own docstrings, with the exact command and
+the count that reddened.
 
 ### Fixed
 
@@ -178,15 +180,23 @@ shape `borrower_type`'s error already uses:
 
 No value is auto-interpreted. A rule like "`<= 1.0` means a fraction" would be
 a silent guess and a 100% LTV is real; guessing is the class of defect this
-release closes. The band is chosen so that it **rejects nothing legitimate**:
-`max_ltv` is a covenant cap written as a fraction, so `[0.0, 1.0]` is the range
-a caller might send to both fields, and read as percentage points anything in
-it but zero claims an LTV of one percent or less — under a cent of debt per
-dollar of collateral. `0.0` is exempt: it is the single value the two
+release closes. The band is chosen so that **what it rejects is worth the
+price**: `max_ltv` is a covenant cap written as a fraction, so `[0.0, 1.0]` is
+the range a caller might send to both fields, and read as percentage points
+anything in it but zero claims an LTV of one percent or less — under a cent of
+debt per dollar of collateral. `0.0` is exempt: it is the single value the two
 conventions render identically, and a supplied zero must still reach the memo.
-A deliberately looser threshold — "no real loan is below a few percent" —
-was rejected because it would refuse a genuine 1–5% LTV, such as a nearly
-repaid loan against appreciated collateral, with no way to express it.
+
+It is not costless, and an earlier draft of this entry said it was — "rejects
+nothing legitimate", two sentences before the same paragraph rejected a looser
+threshold on the grounds that it would refuse a genuine 1-5% LTV "with no way
+to express it". `ltv=0.8` is that instrument, and this band refuses it too. The
+difference is one of degree, and it is why the band stops where it does: at
+`1.0` the two readings are 1% and 100%, and every value below it is an LTV no
+lender writes, where a looser threshold would take in values that are merely
+unusual. An 0.8% LTV is not expressible in 0.2.1; a caller who has one should
+state it in prose on the memo until the scales are unified in 0.3.0. The
+threshold stays where it is.
 
 The unit is now documented on `ltv` and on every sibling that has one:
 `interest_rate`, `max_ltv`, `origination_fee_pct`, `min_dscr_covenant`, `dscr`,
@@ -265,9 +275,127 @@ A section whose flags are all `None` now says so rather than rendering a bare
 heading with nothing under it. Through 0.2.0, `ImpactData()` produced
 `### Target Market & Eligibility` followed immediately by the section rule.
 
-**Conditions of Approval use Word's `List Number` style.** They were ordinary
-paragraphs whose text began with a literal `"1. "`, so Word saw no list: no
-renumbering, no indent, and the numbers were part of the sentence.
+**Ordered lists keep their numbers as text, and Word is never asked to supply
+one.** An intermediate build of 0.2.1 restyled them into Word's `List Number`
+style, so Word saw a real list -- and drew the wrong numbers on it. Word does
+not restart a numbered list on its own: every `List Number` paragraph
+python-docx creates resolves to one continuous numbering definition (`numId=5`,
+taken from the style, with no paragraph-level `w:numPr` to override it).
+Measured on a deal with a two-item ordered list in `deal_summary` and three
+`conditions`, the Markdown reads
+
+    1. Execute the loan agreement          <- deal_summary
+    2. Fund the escrow
+    1. Receipt of final appraisal          <- Conditions of Approval
+    2. Evidence of matching funds
+    3. Environmental review
+
+and the .docx held five `List Number` paragraphs with the numbers stripped from
+their text, so Word printed the Conditions of Approval as **3, 4, 5**. The same
+restyling deleted a caller's own number outright where a condition carried an
+embedded newline: `"Payoff of the 2019 note\n3. Third-party report"` lost its
+literal `3.` on the way into Word.
+
+Ordered items are therefore plain paragraphs whose text carries the number
+exactly as the Markdown has it -- which is what 0.2.0 did, and it was right by
+construction. Per-paragraph `w:numPr` with `w:startOverride` would also work and
+was rejected: it is raw OOXML surgery needing an audit of its own, against a
+principle that already says worst case a list loses its styling, no case loses a
+number the caller wrote. `List Bullet` stays, because a bullet glyph carries no
+information. Gated by **G13**, which reads the numbering definition each
+paragraph resolves to out of the saved file and requires it to draw a bullet or
+nothing.
+
+No gate that existed before this fix could see it. At the commit that carried
+the defect the suite was 284 passed, and the one test that named the style
+asserted its **presence**. `tests/test_docx.py`'s multiset gates were blind for
+the reason G11 exists: they normalised the Markdown with a `_MD_NUMBER` regex
+copied from the renderer, and so subtracted the number from the Markdown side
+exactly as the renderer subtracted it from the Word side. That normaliser is
+gone, and with it the last of the three re-implementations that comment warned
+about.
+
+**An empty `closing_date` or `maturity_date` rendered an empty table row.**
+`sections/transaction.py` tested those two with a bare `is not None`, while
+`README.md`, `creditmemo.fields.is_supplied`, this changelog and the gate's own
+exemption list all stated that for a string the falsy value is `""` and `""` is
+absence. So `closing_date=""` produced
+
+    | Anticipated Closing |  |
+
+-- a labelled row of the Proposed Terms table, in an IC memo, with nothing in
+it -- while `mission=""` next door correctly rendered nothing at all. Four
+documents were right and two lines of code were wrong; the code moved. Both
+fields now go through `fields.is_supplied`.
+
+The gate that was supposed to cover this exercised `mission`, which was one of
+the fields that was already right. It now covers **every `Optional[str]` field
+on every dataclass**, discovered from the annotations rather than listed, and
+the property it checks is mechanism-independent: a field set to `""` must
+produce a memo byte-identical to the same field left `None`. A section that
+reaches its own conclusion about `""` is caught whichever way it reached it.
+
+**The `ltv` scale check was construction-only.** `FinancialData` is not frozen,
+so
+
+    f = FinancialData()
+    f.ltv = 0.75            # read off a spreadsheet, field by field
+
+raised nothing and rendered `| Loan to Value | 0.8% |` -- the defect above,
+verbatim, by the route an incremental build takes, and the route a caller who
+had just hit the constructor's error message would most naturally fall back to.
+The check now also runs at the render boundary, in
+`sections/financial.py`, where the number is about to be printed. The
+constructor check stays: it fires earlier and its traceback points at the
+caller's own line. Freezing the dataclass would also close it and is a breaking
+change, deferred to 0.3.0.
+
+**`max_ltv` rendered at zero decimal places.** `max_ltv=0.795` printed as
+`Maximum LTV of 80%` -- a covenant reported looser than the borrower agreed to,
+at a value plausible enough that nobody would query it. It now renders `.1f`,
+the same precision as the `FinancialData.ltv` it caps; the two describe the same
+quantity and are read against each other.
+
+**`save_docx` raised an unnamed error on control characters.** A vertical tab,
+form feed or NUL -- routine in text pasted out of a PDF -- reached lxml, which
+raised
+
+    ValueError: All strings must be XML compatible: Unicode or ASCII,
+    no NULL bytes or control characters
+
+naming no field, no line, no character and no file, after `save_markdown` had
+already accepted the same deal and reported success. The renderer now checks
+before it builds anything and names the codepoint and the memo line. Nothing is
+sanitised: deleting or substituting a character is the silent alteration this
+release exists to remove. The character class was measured against python-docx,
+not read off the XML spec -- `\t`, `\n`, `\r` and `\x7f` are accepted, and
+every codepoint the renderer refuses was fed through `add_paragraph` and `save`
+and observed to fail.
+
+**A dead clause in the `ltv` check, and a gate that could not fail on it.**
+`_reject_fractional_ltv` began `if value is None or value == 0: return`, above a
+band written `0 < value <= 1.0` that already excluded zero. The clause could
+never fire; deleting it left the suite at 284 passed, and the docstring named it
+as the thing keeping zero out. It is gone and the zero test stays -- the
+property is real, the clause was not producing it.
+
+**The README enumerated nine tables and the memo renders ten.** Balance Sheet
+Summary was missing from the Word-output section, and it is the one an IC reads
+for the borrower's cash position. Nothing was wrong with the code; a reader
+counting tables against the README would have concluded one had been dropped.
+Now gated: a fully populated memo's table headings, the count of real Word
+tables in the saved file, and the README's phrase for each are checked against
+one declared list.
+
+**G11's coverage guard special-cased a field by name.** Its docstring claimed to
+cover "every list-of-string field" and its code read
+`if is_text or f.name == "conditions"`. Adding
+`covenants: list = field(default_factory=list)` to `DealProfile` left the suite
+green and the field reached neither rendering. List fields are now classified by
+what they hold: `List[str]` needs a sentinel, a list of anything else is covered
+through that thing's own fields, and a bare `list` is undecided and reds until
+someone decides. `DealProfile.risks` and `DealProfile.conditions` carry their
+element types for this reason.
 
 **Section rules are Word paragraph borders.** They were paragraphs containing
 sixty literal underscores — selectable text that does not span the column, does
@@ -290,8 +418,8 @@ Terms showed `$2,500,000 ($2.50MM)`. Both now show the full form.
   deal, never against a re-parse or re-normalisation of the generated Markdown.
 
   This exists because the .docx gates did the opposite. `tests/test_docx.py`
-  normalised the Markdown with `_MD_NUMBER = r"^\d+\.\s+(.*)$"` — character
-  for character the renderer's own `_ORDERED_ITEM` — and with a
+  normalised the Markdown with a `_MD_NUMBER = r"^\d+\.\s+(.*)$"` — character
+  for character the renderer's own `_ORDERED_ITEM`, since removed — and with a
   `_strip_emphasis` that replicated the renderer's `.replace("*", "")`. They
   removed, on the Markdown side, exactly what the renderer destroyed on the Word
   side, so both G1 variants stayed green while content was being deleted.
@@ -365,10 +493,14 @@ instead.
   and let Word supply its own `1.`. A chronology written as 2019/2024 reached
   the Investment Committee as 1./2. That is the only defect in this class that
   both destroyed content and substituted a false value in its place, and it is
-  **fixed**, not deferred: a line becomes a Word `List Number` item only if it
-  belongs to a contiguous run starting at 1 and incrementing by 1, and anything
-  else is emitted verbatim with its number intact. The rule fails toward
-  preserving content — its worst case is a genuine list losing its Word styling.
+  **fixed**, not deferred -- twice over, and the second fix supersedes the
+  first. The first was a rule that restyled a line into a Word `List Number`
+  item only if it belonged to a contiguous run starting at 1 and incrementing by
+  1. It protected the 2019/2024 chronology and left the ordinary case broken, in
+  a way it could not protect against: Word renumbers any list it is given. So no
+  line is restyled at all now. Ordered items are plain paragraphs carrying their
+  own numbers, the whole class is closed rather than narrowed, and the cost is
+  that a genuine ordered list loses its Word list styling. See **G13** above.
 
   A structured intermediate representation — building the .docx from the
   `DealProfile` rather than by re-parsing Markdown — would end the whole class.

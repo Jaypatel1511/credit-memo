@@ -27,9 +27,16 @@ def generate(deal: DealProfile) -> str:
         lines.append(f"| Amortization | {fields.term(lt.amortization_years)} |")
     if lt.io_periods:
         lines.append(f"| Interest-Only Period | {lt.io_periods} months |")
-    if lt.closing_date is not None:
+    # `fields.is_supplied`, not a bare `is not None`. These two are the only
+    # `Optional[str]` fields in the package that were tested for `None` alone,
+    # against a rule the README, `fields.is_supplied`, the CHANGELOG and G9 all
+    # state: for a string, the falsy value is `""` and `""` is absence. A
+    # `closing_date=""` therefore rendered `| Anticipated Closing |  |` — a row
+    # of the Proposed Terms table, in an IC memo, with a label and no value —
+    # while `mission=""` next door correctly rendered nothing at all. R18.
+    if fields.is_supplied(lt.closing_date):
         lines.append(f"| Anticipated Closing | {escape_cell(lt.closing_date)} |")
-    if lt.maturity_date is not None:
+    if fields.is_supplied(lt.maturity_date):
         lines.append(f"| Maturity Date | {escape_cell(lt.maturity_date)} |")
     if lt.origination_fee_pct:
         lines.append(
@@ -67,7 +74,12 @@ def generate(deal: DealProfile) -> str:
     if lt.min_dscr_covenant is not None:
         covenants.append(f"Minimum DSCR of {lt.min_dscr_covenant:.2f}x")
     if lt.max_ltv is not None:
-        covenants.append(f"Maximum LTV of {lt.max_ltv*100:.0f}%")
+        # `.1f`, the same precision `FinancialData.ltv` renders at. R23: `.0f`
+        # turned a `max_ltv=0.795` covenant into "Maximum LTV of 80%" — a
+        # covenant reported looser than it is, at a value that is plausible
+        # enough to go unquestioned, in the section an IC reads to learn what
+        # the borrower agreed to.
+        covenants.append(f"Maximum LTV of {lt.max_ltv*100:.1f}%")
 
     if covenants:
         lines += ["### Financial Covenants", ""]

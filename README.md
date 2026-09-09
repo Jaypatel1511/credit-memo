@@ -98,13 +98,28 @@ credit-memo imports nothing outside the standard library. Only the optional
 
 ## Word (.docx) Output
 
-`save_docx()` writes headings, paragraphs, bullet and numbered lists, section
-rules and **every table in the memo as a real Word table** — deal summary,
-proposed terms, NMTC structure, historical financials, credit metrics,
-projections, impact metrics, risk factors and the IC signature block. Tables use
-the built-in `Table Grid` style with a bold header row. Conditions of Approval
-use Word's `List Number` style, and the rules between sections are paragraph
-borders rather than rows of underscores.
+`save_docx()` writes headings, paragraphs, bulleted lists, section rules and
+**every table in the memo as a real Word table** — deal summary, proposed terms,
+NMTC structure, historical financials, balance sheet summary, credit metrics,
+projections, impact metrics, risk factors and the IC signature block: ten in a
+memo with all of them populated. Tables use the built-in `Table Grid` style with
+a bold header row, and the rules between sections are paragraph borders rather
+than rows of underscores.
+
+**Numbered lists keep their numbers as text.** Conditions of Approval and any
+ordered list you write into a text field arrive as ordinary paragraphs whose
+text still begins with `1.`, `2.`, `3.` — not as Word list items. This is
+deliberate. Word does not restart a numbered list on its own, so styling them
+made the Conditions of Approval in a memo that also had an ordered list earlier
+print as **3, 4, 5**. A number in this memo is a value an underwriter wrote; the
+package will lose a list's indentation before it will let Word choose a
+different number. Unordered lists do use Word's `List Bullet` style, because a
+bullet glyph says exactly what the `-` in the Markdown said.
+
+`save_docx()` refuses text containing control characters — a vertical tab or
+form feed, which is what a paste out of a PDF often leaves behind — and names
+the character and the memo line in the error. They are not valid in a `.docx`
+and nothing is silently stripped. `save_markdown()` accepts them.
 
 The .docx is a pure function of the Markdown the same deal produces: every
 heading, paragraph, list item, rule and table in the Word file comes from a line
