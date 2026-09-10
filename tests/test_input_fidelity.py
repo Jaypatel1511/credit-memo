@@ -399,15 +399,15 @@ def test_a_supplied_zero_is_not_discarded_as_if_it_were_absent():
     # fields had already decided the section did not exist.
     md = CreditMemo(_deal(financials=FinancialData(cash=450_000))).to_markdown()
     assert "Balance Sheet" in md, "the only figure supplied was dropped"
-    assert "| Cash & Equivalents | $0.45MM |" in md
+    assert "| Cash & Equivalents | $450,000 |" in md
 
     # A supplied zero is a number, not an absence — in either position.
     md = CreditMemo(_deal(financials=FinancialData(cash=0))).to_markdown()
-    assert "| Cash & Equivalents | $0.00MM |" in md, "a supplied zero was dropped"
+    assert "| Cash & Equivalents | $0 |" in md, "a supplied zero was dropped"
 
     md = CreditMemo(_deal(financials=FinancialData(
         total_assets=0, total_liabilities=3_500_000))).to_markdown()
-    assert "| Total Assets | $0.00MM |" in md, "a supplied zero was dropped"
+    assert "| Total Assets | $0 |" in md, "a supplied zero was dropped"
 
 
 def test_a_borrower_zero_is_not_discarded_either():
@@ -416,7 +416,7 @@ def test_a_borrower_zero_is_not_discarded_either():
         city="Chicago", total_assets=0.0)
     md = CreditMemo(_deal(borrower=borrower)).to_markdown()
     assert "Financial Snapshot" in md
-    assert "**Total Assets:** $0.0MM" in md
+    assert "**Total Assets:** $0" in md
 
 
 def test_prose_that_begins_with_a_pipe_stays_prose(tmp_path):
@@ -470,8 +470,8 @@ def test_prose_that_begins_with_three_dashes_is_not_deleted(tmp_path):
 def test_no_markdown_emphasis_markers_survive_into_the_word_document(tmp_path):
     """
     Only the plain-paragraph branch stripped `**`. Bullets kept theirs, so
-    `- **Total Assets:** $8.0MM` reached Word as the literal characters
-    `**Total Assets:** $8.0MM` — raw Markdown in the IC's document.
+    `- **Total Assets:** $8.00MM` reached Word as the literal characters
+    `**Total Assets:** $8.00MM` — raw Markdown in the IC's document.
 
     Red-proof (must fail): drop _clean() from the bullet branch of the renderer.
     Observed: 1 failed.
@@ -487,7 +487,7 @@ def test_no_markdown_emphasis_markers_survive_into_the_word_document(tmp_path):
     texts += [c.text for t in doc.tables for r in t.rows for c in r.cells]
     offenders = [t for t in texts if "**" in t]
     assert not offenders, f"literal Markdown emphasis in the .docx: {offenders}"
-    assert "Total Assets: $8.0MM" in texts
+    assert "Total Assets: $8.00MM" in texts
 
 
 def test_a_date_object_survives_both_renderers(tmp_path):
@@ -521,6 +521,14 @@ def test_a_date_object_survives_both_renderers(tmp_path):
 #: it in the Word-output section). Written out here because it is the reviewed
 #: surface: a table added to the memo, or a phrase edited out of the README,
 #: has to appear as a diff in this file.
+#:
+#: F14. This listed one risk table and the fixture below carried one `High`
+#: risk, so `### Medium Risk Factors` and `### Low Risk Factors` fell outside
+#: both this list and the assertion — and the gate's
+#: `len(doc.tables) == len(DOCUMENTED_TABLES)` would have *failed* on a deal
+#: with all three severities, which is the ordinary case. A memo with all three
+#: renders twelve tables, not ten; measured, and README.md now says twelve.
+#: The fixture carries all three so the gate sees the memo the README describes.
 DOCUMENTED_TABLES = [
     ("### Deal Summary",                       "deal summary"),
     ("### Proposed Terms",                     "proposed terms"),
@@ -530,13 +538,18 @@ DOCUMENTED_TABLES = [
     ("### Key Credit Metrics",                 "credit metrics"),
     ("### Financial Projections",              "projections"),
     ("### Community Impact Metrics",           "impact metrics"),
-    ("### High Risk Factors",                  "risk factors"),
+    ("### High Risk Factors",                  "high risk factors"),
+    ("### Medium Risk Factors",                "medium risk factors"),
+    ("### Low Risk Factors",                   "low risk factors"),
     ("### Approval",                           "IC signature block"),
 ]
 
 
 def _fully_populated_deal():
-    """A deal that renders every table the package can render."""
+    """
+    A deal that renders every table the package can render — which means all
+    three risk severities, one table each. F14.
+    """
     return _deal(
         loan_terms=LoanTerms(deal_type="nmtc", amount=2_500_000,
                              interest_rate=0.045, term_years=10,
@@ -547,7 +560,11 @@ def _fully_populated_deal():
             dscr=1.35, ltv=75.0, projected_dscr_y1=1.38),
         impact=ImpactData(jobs_created=18),
         risks=[RiskFactor(category="Credit", description="Concentration",
-                          severity="High", mitigant="Guaranty")],
+                          severity="High", mitigant="Guaranty"),
+               RiskFactor(category="Market", description="Reimbursement rates",
+                          severity="Medium", mitigant="Conservative projections"),
+               RiskFactor(category="Operational", description="Key person",
+                          severity="Low", mitigant="Succession plan")],
         nmtc_terms=NMTCTerms(
             nmtc_allocation=10_000_000, credit_price=0.83,
             leverage_loan_rate=0.045, qlici_a_rate=0.045, qlici_b_rate=0.0,
@@ -579,6 +596,12 @@ def test_the_readme_names_every_table_the_memo_renders(tmp_path):
     the code; a reader counting tables against the README would have concluded
     one had been dropped.
 
+    F14. The fixture then carried a single `High` risk, so the two other
+    severity tables were outside the list *and* outside the assertion, and this
+    gate would have reddened on any deal with all three — the ordinary case.
+    Measured: twelve tables with all three severities. The fixture carries all
+    three and the README says twelve.
+
     Three things are checked together, because any one of them alone drifts:
     the memo's own table headings, the count of real Word tables in the saved
     .docx, and the README phrase for each.
@@ -588,8 +611,13 @@ def test_the_readme_names_every_table_the_memo_renders(tmp_path):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 1 failed, 339 passed — "tables the README does not name:
-    ['### Balance Sheet Summary (Most Recent)']".
+    Observed: 1 failed, 426 passed — "tables the README does not name:
+    ['### Balance Sheet Summary (Most Recent)']". (The passed count moved with
+    the suite; the failure is the same one.)
+
+    Second red-proof (must fail), for F14: revert `_fully_populated_deal` to the
+    single `High` risk it carried. Observed: 1 failed, 426 passed — the
+    rendered table list no longer matches the declared one.
     """
     pytest.importorskip("docx")
     import docx as _docx
@@ -1102,42 +1130,60 @@ def test_g8_the_declared_flag_constants_are_the_reviewed_ones():
 #: transformation — both apply: a gate that formats its expectation by calling
 #: `creditmemo.fields.rate` follows that function wherever it goes and can
 #: never fail.
+#: R24 added the fifth column. Through 0.2.1 the money rows expected
+#: `"$0.00MM"` — which is also what a *supplied $4,999* produced, so the gate
+#: for this release's central ruling asserted the violation's own output and
+#: could not distinguish the property from its breach. The probe is a small
+#: non-zero the row must NOT render as the zero text; every money row carries
+#: the $4,999 that used to collapse.
+#:
+#: The ratio and rate rows carry a probe too, but a larger one, and that is a
+#: disclosure rather than a choice: `_fmt_ratio` and `creditmemo.fields.rate`
+#: still round a small non-zero into the zero rendering (`_fmt_ratio(0.001)` is
+#: `"0.00x"`). R24 ruled on dollar magnitudes; the rest of the formatter
+#: surface is 0.3.0, and this column is where that shows.
 ZERO_RENDERINGS = [
-    # (holder, field, the zero supplied, the text the memo must show)
-    ("loan_terms",     "interest_rate",        0.0, "0.00%"),
-    ("loan_terms",     "term_years",           0,   "0 years"),
-    ("loan_terms",     "amortization_years",   0,   "0 years"),
-    ("loan_terms",     "min_dscr_covenant",    0.0, "Minimum DSCR of 0.00x"),
-    ("loan_terms",     "max_ltv",              0.0, "Maximum LTV of 0.0%"),
-    ("borrower",       "year_founded",         0,   "**Year Founded:** 0"),
-    ("borrower",       "total_assets",         0.0, "**Total Assets:** $0.0MM"),
-    ("borrower",       "annual_revenue",       0.0, "**Annual Revenue:** $0.0MM"),
-    ("financial_data", "revenue_y1",           0.0, "$0.00MM"),
-    ("financial_data", "revenue_y2",           0.0, "$0.00MM"),
-    ("financial_data", "revenue_y3",           0.0, "$0.00MM"),
-    ("financial_data", "net_income_y1",        0.0, "$0.00MM"),
-    ("financial_data", "net_income_y2",        0.0, "$0.00MM"),
-    ("financial_data", "net_income_y3",        0.0, "$0.00MM"),
-    ("financial_data", "ebitda_y1",            0.0, "$0.00MM"),
-    ("financial_data", "ebitda_y2",            0.0, "$0.00MM"),
-    ("financial_data", "ebitda_y3",            0.0, "$0.00MM"),
-    ("financial_data", "total_assets",         0.0, "| Total Assets | $0.00MM |"),
-    ("financial_data", "total_liabilities",    0.0, "| Total Liabilities | $0.00MM |"),
-    ("financial_data", "net_assets_equity",    0.0, "| Net Assets / Equity | $0.00MM |"),
-    ("financial_data", "cash",                 0.0, "| Cash & Equivalents | $0.00MM |"),
-    ("financial_data", "dscr",                 0.0, "0.00x"),
-    ("financial_data", "current_ratio",        0.0, "0.00x"),
-    ("financial_data", "debt_to_equity",       0.0, "0.00x"),
-    ("financial_data", "ltv",                  0.0, "0.0%"),
-    ("financial_data", "projected_revenue_y1", 0.0, "| Revenue | $0.00MM |"),
+    # (holder, field, the zero supplied, the text the memo must show,
+    #  a non-zero that must NOT produce that text)
+    ("loan_terms",     "interest_rate",        0.0, "0.00%", 0.045),
+    # Full rows, not bare "0 years": the probe assertion R24 added found that
+    # `"0 years"` is a substring of `"20 years"`, so an expectation written that
+    # loosely reported the *amortization* row as proof about the *term* row.
+    ("loan_terms",     "term_years",           0,   "| Loan Term | 0 years |", 5),
+    ("loan_terms",     "amortization_years",   0,   "| Amortization | 0 years |", 20),
+    ("loan_terms",     "min_dscr_covenant",    0.0, "Minimum DSCR of 0.00x", 1.20),
+    ("loan_terms",     "max_ltv",              0.0, "Maximum LTV of 0.0%", 0.75),
+    ("borrower",       "year_founded",         0,   "**Year Founded:** 0", 2005),
+    ("borrower",       "total_assets",         0.0, "**Total Assets:** $0", 4_999),
+    ("borrower",       "annual_revenue",       0.0, "**Annual Revenue:** $0", 4_999),
+    ("financial_data", "revenue_y1",           0.0, "| Revenue | $0 | N/A | N/A |", 4_999),
+    ("financial_data", "revenue_y2",           0.0, "| Revenue | N/A | $0 | N/A |", 4_999),
+    ("financial_data", "revenue_y3",           0.0, "| Revenue | N/A | N/A | $0 |", 4_999),
+    ("financial_data", "net_income_y1",        0.0, "| Net Income | $0 | N/A | N/A |", 4_999),
+    ("financial_data", "net_income_y2",        0.0, "| Net Income | N/A | $0 | N/A |", 4_999),
+    ("financial_data", "net_income_y3",        0.0, "| Net Income | N/A | N/A | $0 |", 4_999),
+    ("financial_data", "ebitda_y1",            0.0, "| EBITDA | $0 | N/A | N/A |", 4_999),
+    ("financial_data", "ebitda_y2",            0.0, "| EBITDA | N/A | $0 | N/A |", 4_999),
+    ("financial_data", "ebitda_y3",            0.0, "| EBITDA | N/A | N/A | $0 |", 4_999),
+    ("financial_data", "total_assets",         0.0, "| Total Assets | $0 |", 4_999),
+    ("financial_data", "total_liabilities",    0.0, "| Total Liabilities | $0 |", 4_999),
+    ("financial_data", "net_assets_equity",    0.0, "| Net Assets / Equity | $0 |", 4_999),
+    ("financial_data", "cash",                 0.0, "| Cash & Equivalents | $0 |", 4_999),
+    ("financial_data", "dscr",                 0.0, "0.00x", 1.35),
+    ("financial_data", "current_ratio",        0.0, "0.00x", 1.80),
+    ("financial_data", "debt_to_equity",       0.0, "0.00x", 0.78),
+    # A fraction in (0, 1.0] raises rather than render a false LTV (R14/R20),
+    # so the probe is on the percentage-point scale this field declares.
+    ("financial_data", "ltv",                  0.0, "0.0%", 75.0),
+    ("financial_data", "projected_revenue_y1", 0.0, "| Revenue | $0 | — | — |", 4_999),
     # The Projections DSCR row gated all three years on `projected_dscr_y1`,
     # so a supplied Year-2 or Year-3 figure was dropped and the section
     # rendered a header-only table — the `has_balance`/`cash` defect of
     # 0.2.0, still live in the block next door. Found by this gate's
     # coverage check, not by any list.
-    ("financial_data", "projected_dscr_y1",    0.0, "| DSCR | 0.00x | N/A | N/A |"),
-    ("financial_data", "projected_dscr_y2",    0.0, "| DSCR | N/A | 0.00x | N/A |"),
-    ("financial_data", "projected_dscr_y3",    0.0, "| DSCR | N/A | N/A | 0.00x |"),
+    ("financial_data", "projected_dscr_y1",    0.0, "| DSCR | 0.00x | N/A | N/A |", 1.38),
+    ("financial_data", "projected_dscr_y2",    0.0, "| DSCR | N/A | 0.00x | N/A |", 1.42),
+    ("financial_data", "projected_dscr_y3",    0.0, "| DSCR | N/A | N/A | 0.00x |", 1.47),
 ]
 
 #: The `Optional[bool]` fields are gated by G6/G8, which already require the
@@ -1173,16 +1219,36 @@ def _deal_with_zero(holder, field, value):
     raise AssertionError(holder)
 
 
-@pytest.mark.parametrize("holder,field,zero,expected", ZERO_RENDERINGS,
+@pytest.mark.parametrize("holder,field,zero,expected,probe", ZERO_RENDERINGS,
                          ids=lambda v: v if isinstance(v, str) else None)
-def test_g9_a_supplied_zero_renders_as_the_value(holder, field, zero, expected):
+def test_g9_a_supplied_zero_renders_as_the_value(holder, field, zero, expected,
+                                                 probe):
     """
     G9. A supplied `0` / `0.0` renders as the value — never as "N/A", never as
     an omitted row.
 
-    The unset rendering is measured too, so the gate cannot pass because some
-    *other* field happens to produce the same text: `expected` must be absent
-    when the field is `None` and present when it is zero.
+    Three renderings are measured, not one, because the first two alone let
+    this gate pass on a package that does not have the property:
+
+      * `expected` must be ABSENT when the field is `None` — so the gate cannot
+        pass because some *other* field happens to produce the same text;
+      * `expected` must be PRESENT when the field is zero;
+      * `expected` must be ABSENT when the field holds `probe`, a non-zero.
+
+    R24 added the third. Without it this gate asserted `"$0.00MM"` for a
+    supplied zero — and `"$0.00MM"` was also what a supplied $4,999 produced,
+    at every money site in the package. The gate for the ruling that a stated
+    zero must reach the memo could not tell a stated zero from a figure the
+    memo had destroyed, which is this release's signature failure: a gate that
+    shares the blind spot of the thing it checks.
+
+    Red-proof for the third assertion (must fail): in creditmemo/money.py,
+    replace the body of `money` with the unconditional divide it replaced —
+        return f"${value/1e6:,.2f}MM"
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: see G14's docstring, which reds on the same mutation.
 
     Red-proof (must fail): revert *both* `interest_rate` sites — the one in
     creditmemo/sections/executive.py and the one in
@@ -1208,6 +1274,12 @@ def test_g9_a_supplied_zero_renders_as_the_value(holder, field, zero, expected):
     assert expected in md, (
         f"{holder}.{field}={zero!r} was supplied and the memo does not show "
         f"{expected!r}")
+
+    nonzero = CreditMemo(_deal_with_zero(holder, field, probe)).to_markdown()
+    assert expected not in nonzero, (
+        f"{holder}.{field}={probe!r} renders as {expected!r} — the text this "
+        f"gate requires for a *stated zero*. The memo cannot distinguish the "
+        f"figure the caller supplied from zero, and neither can this gate.")
 
 
 #: The fields the Executive Summary and the Transaction Structure both show.
@@ -1275,7 +1347,7 @@ def test_g9_covers_every_optional_field_on_every_dataclass():
                     and type(None) in typing.get_args(t)):
                 optional.add(f.name)
 
-    covered = {field for _, field, _, _ in ZERO_RENDERINGS}
+    covered = {row[1] for row in ZERO_RENDERINGS}
     assert optional, "no Optional fields found — this gate would pass vacuously"
     missing = optional - covered - ZERO_EXEMPT_OPTIONAL
     assert not missing, f"Optional fields with no zero-rendering decision: {sorted(missing)}"
@@ -2353,3 +2425,584 @@ def test_the_derived_blocked_set_names_the_dependency_it_must_block():
     result = subprocess.run([sys.executable, "-c", program],
                             capture_output=True, text=True, cwd=str(ROOT))
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ── G14 — a dollar figure says which figure it is ────────────────────────────
+#
+# R24. Every money site formatted its own, in the `$MM` unit, at two decimals —
+# one decimal in the borrower snapshot. Two decimals of `$MM` resolve to
+# $10,000, so measured at 3acaf7b:
+#
+#     supplied         0 -> | Revenue | $0.00MM |   | Cash & Equivalents | $0.00MM |
+#     supplied     4,999 -> | Revenue | $0.00MM |   | Cash & Equivalents | $0.00MM |
+#     total_assets=49,000 -> - **Total Assets:** $0.0MM
+#
+# and the memo contradicted itself two lines apart, because the trend is
+# computed on the raw values and was right:
+#
+#     | Revenue | $0.00MM | N/A | $0.00MM |
+#     **Revenue Trend:** Increasing — revenue has been increasing ...
+#
+# `microenterprise` is a declared SECTORS value and $5k-$50k is that product's
+# normal size, so this is not a corner: it is the package's own stated audience
+# reading a destroyed figure as a stated zero, in the Investment Committee memo,
+# with no cue that anything was lost.
+
+#: Magnitudes swept by G14, spanning $1 to $100,000,000. Each is also swept
+#: negative. The small end is where the `$MM` divide destroyed the figure; the
+#: values around $1,000,000 straddle the unit crossover; the cents values are
+#: below the dollar form's own floor.
+MONEY_SWEEP = [
+    0.004, 0.005, 0.01, 0.4, 1, 1.4, 99, 100, 999, 1_000, 4_999, 4_999.60,
+    5_000, 9_999, 10_000, 49_000, 50_000, 99_999, 100_000, 999_999,
+    999_999.99, 1_000_000, 1_000_001, 1_234_567, 2_500_000, 4_999_999,
+    5_000_000, 10_000_000, 99_999_999, 100_000_000,
+]
+
+#: How much a rendered figure is allowed to differ from the value behind it,
+#: per format. These are the formats' own claims, read off the characters:
+#: two decimals of `$MM` claim $10,000 of resolution, so half of that either
+#: way; a dollars-and-cents string claims the cent.
+_MM_TOLERANCE = 5_000.0
+_CENT_TOLERANCE = 0.005
+
+#: A rendered dollars-and-cents figure, e.g. "-$1,234.56", "$4,999", "$1.00MM".
+#: Written from the rendered characters. Nothing in this section imports
+#: creditmemo.money or calls it to build an expectation: R8's rule is that a
+#: gate which re-implements the transformation it checks shares its blind spot,
+#: and the gate this replaces asserted "$0.00MM" — the violation's own output.
+_RENDERED_MONEY = re.compile(
+    r"^(?P<sign>-?)\$(?P<digits>\d{1,3}(?:,\d{3})*|\d+)"
+    r"(?:\.(?P<cents>\d{2}))?(?P<mm>MM)?$")
+
+
+def _recover(rendered):
+    """
+    Read a value back out of a rendered money string.
+
+    Returns ``(low, high)``: the closed interval the rendering asserts the
+    value lies in, given the precision its own characters claim. A bound form
+    (``<$0.01``) asserts an open-ended interval on one side of zero.
+    """
+    if rendered == "<$0.01":
+        return (0.0, 0.01)
+    if rendered == ">-$0.01":
+        return (-0.01, 0.0)
+    match = _RENDERED_MONEY.match(rendered)
+    assert match, f"not a money rendering this gate can read: {rendered!r}"
+    text = match.group("digits").replace(",", "")
+    value = float(text)
+    if match.group("cents") is not None:
+        value += float(match.group("cents")) / 100.0
+    if match.group("mm"):
+        value *= 1_000_000.0
+        tolerance = _MM_TOLERANCE
+    else:
+        tolerance = _CENT_TOLERANCE
+    if match.group("sign"):
+        value = -value
+    return (value - tolerance, value + tolerance)
+
+
+@pytest.mark.parametrize("magnitude", MONEY_SWEEP, ids=lambda v: repr(v))
+@pytest.mark.parametrize("sign", [1, -1], ids=["positive", "negative"])
+def test_g14_no_non_zero_figure_renders_as_a_stated_zero(magnitude, sign):
+    """
+    G14. Across $1 to $100,000,000, positive and negative, no non-zero dollar
+    figure renders as the string a *stated* zero renders as, and every value is
+    recoverable from its rendering to the precision that rendering claims.
+
+    Both halves are needed and neither implies the other. A formatter that
+    printed every figure as "$1" would pass the first and fail the second; one
+    that printed "$0.00MM" for everything below $5,000 — which is what shipped
+    — passes the second only if you accept a $5,000 tolerance at $4,999, which
+    is the whole defect stated as an excuse.
+
+    Red-proof (must fail): in creditmemo/money.py, replace the body of `money`
+    with the unconditional divide it replaced —
+
+        def money(value) -> str:
+            if value is None:
+                return NOT_SUPPLIED
+            return f"${value/1e6:,.2f}MM"
+
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 66 failed, 361 passed. 30 of the 66 are this gate's own
+    parameters — the 30 of its 60 that fall below the crossover, in both signs;
+    the figures already large enough for the $MM form still render correctly,
+    which is the point.
+    """
+    from creditmemo import money as money_module
+
+    value = magnitude * sign
+    rendered = money_module.money(value)
+
+    assert rendered != money_module.ZERO, (
+        f"{value!r} renders as {rendered!r}, which is what a stated zero "
+        f"renders as. An Investment Committee cannot tell the two apart.")
+
+    low, high = _recover(rendered)
+    assert low <= value <= high, (
+        f"{value!r} renders as {rendered!r}, which claims a value in "
+        f"[{low!r}, {high!r}]")
+
+
+def test_g14_a_stated_zero_still_renders():
+    """
+    R6's ruling stands: a supplied zero reaches the memo. G14 above is a
+    one-sided property — a formatter that raised on every value would pass it —
+    so the other side is stated here.
+    """
+    from creditmemo import money as money_module
+
+    assert money_module.money(0) == money_module.ZERO
+    assert money_module.money(0.0) == money_module.ZERO
+    assert money_module.money(-0.0) == money_module.ZERO
+    assert money_module.dollars(0) == money_module.ZERO
+    assert money_module.money_with_mm(0) == money_module.ZERO
+    assert money_module.money(None) == "N/A"
+
+
+def test_g14_the_sweep_covers_the_range_it_claims():
+    """
+    Guard the guard. The gate above is parametrised, so a truncated list would
+    shrink it silently and it would still be green.
+    """
+    assert min(MONEY_SWEEP) < 1, "the sweep does not reach below a dollar"
+    assert 1 in MONEY_SWEEP, "the sweep does not include $1"
+    assert max(MONEY_SWEEP) >= 100_000_000, "the sweep stops short of $100MM"
+    below = [v for v in MONEY_SWEEP if v < 5_000]
+    assert len(below) >= 6, (
+        "the sweep barely covers the band the $MM form destroyed, which is "
+        "the band this gate exists for")
+    assert any(v >= 1_000_000 for v in MONEY_SWEEP)
+
+
+#: Every dollar-denominated field on the schema, as (holder, field). "Holder"
+#: is the keyword `_deal_with_dollars` builds. This is the reviewed surface: a
+#: new dollar field cannot be added without a line here or in the exempt set
+#: below, because `test_g14_covers_every_dollar_field` reds until there is one.
+DOLLAR_FIELDS = [
+    ("borrower",       "total_assets"),
+    ("borrower",       "annual_revenue"),
+    ("loan_terms",     "amount"),
+    ("financial_data", "revenue_y1"),
+    ("financial_data", "revenue_y2"),
+    ("financial_data", "revenue_y3"),
+    ("financial_data", "net_income_y1"),
+    ("financial_data", "net_income_y2"),
+    ("financial_data", "net_income_y3"),
+    ("financial_data", "ebitda_y1"),
+    ("financial_data", "ebitda_y2"),
+    ("financial_data", "ebitda_y3"),
+    ("financial_data", "total_assets"),
+    ("financial_data", "total_liabilities"),
+    ("financial_data", "net_assets_equity"),
+    ("financial_data", "cash"),
+    ("financial_data", "projected_revenue_y1"),
+    ("nmtc_terms",     "nmtc_allocation"),
+]
+
+#: Numeric fields that are not dollar magnitudes, with what they are instead.
+#: Named so that a new one has to be classified rather than quietly skipped.
+NON_DOLLAR_NUMERIC = {
+    "year_founded": "a calendar year",
+    "interest_rate": "a fraction", "term_years": "whole years",
+    "amortization_years": "whole years", "io_periods": "whole months",
+    "min_dscr_covenant": "a multiple", "max_ltv": "a fraction",
+    "origination_fee_pct": "a fraction",
+    "dscr": "a multiple", "current_ratio": "a multiple",
+    "debt_to_equity": "a multiple", "ltv": "percentage points",
+    "projected_dscr_y1": "a multiple", "projected_dscr_y2": "a multiple",
+    "projected_dscr_y3": "a multiple",
+    "credit_price": "dollars per $1 of credit — a price, not a magnitude; it "
+                    "does not go through creditmemo.money and still carries "
+                    "R24's property at two decimals. Reported, 0.3.0.",
+    "leverage_loan_rate": "a fraction", "qlici_a_rate": "a fraction",
+    "qlici_b_rate": "a fraction", "cde_fee_rate": "a fraction",
+    "compliance_years": "whole years",
+    "jobs_created": "a count", "jobs_retained": "a count",
+    "affordable_units": "a count", "sq_ft_community_space": "square feet",
+    "patients_served": "a count", "students_served": "a count",
+    "businesses_supported": "a count",
+}
+
+#: Magnitudes every dollar field is rendered at. All four collapsed to one
+#: string at 3acaf7b: $1, $4,999 and $49,000 to "$0.00MM" or "$0.0MM", and
+#: $999,999 to "$1.00MM" — the last indistinguishable from a stated $1,000,000.
+DOLLAR_FIELD_MAGNITUDES = [1, 4_999, 49_000, 999_999]
+
+
+def _deal_with_dollars(holder, field, value):
+    """A deal whose only unusual input is `holder.field = value`."""
+    if holder == "borrower":
+        kw = dict(name="Test Borrower", borrower_type="nonprofit",
+                  sector="microenterprise", state="IL", city="Chicago")
+        kw[field] = value
+        return _deal(borrower=BorrowerProfile(**kw))
+    if holder == "loan_terms":
+        kw = dict(deal_type="loan", amount=2_500_000)
+        kw[field] = value
+        return _deal(loan_terms=LoanTerms(**kw))
+    if holder == "financial_data":
+        return _deal(financials=FinancialData(**{field: value}))
+    if holder == "nmtc_terms":
+        kw = dict(nmtc_allocation=10_000_000, credit_price=0.83,
+                  leverage_loan_rate=0.045, qlici_a_rate=0.045,
+                  qlici_b_rate=0.0, cde_fee_rate=0.02)
+        kw[field] = value
+        return _deal(nmtc_terms=NMTCTerms(**kw))
+    raise AssertionError(holder)
+
+
+@pytest.mark.parametrize("holder,field", DOLLAR_FIELDS,
+                         ids=[f"{h}.{f}" for h, f in DOLLAR_FIELDS])
+def test_g14_every_dollar_field_renders_its_own_magnitude(holder, field):
+    """
+    G14, the half that is about the memo rather than the formatter.
+
+    The formatter sweep above cannot see a section that does not call the
+    formatter, and "one shared formatter" is a claim about the sections, not
+    about creditmemo/money.py. So this asks the rendered memo directly: four
+    different figures in the band the `$MM` divide destroyed must produce four
+    different memos, and each figure's digits must appear in its own.
+
+    Nothing here calls creditmemo.money. The renderings are compared with each
+    other; the ground truth is the digits the caller supplied.
+
+    Red-proof (must fail): in creditmemo/money.py, replace the body of `money`
+    with the unconditional divide (see the sweep gate above).
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 66 failed, 361 passed; 17 of the 18 parameters here.
+    `loan_terms.amount` is the one that survives, because the Amount row prints
+    the exact dollars beside the $MM form and always did — which is why the
+    formatter sweep alone is not enough, and why this gate reads the memo.
+    """
+    rendered = {}
+    for magnitude in DOLLAR_FIELD_MAGNITUDES:
+        md = CreditMemo(_deal_with_dollars(holder, field, magnitude)).to_markdown()
+        assert f"{magnitude:,}" in md, (
+            f"{holder}.{field}={magnitude!r}: the figure's own digits "
+            f"({magnitude:,}) appear nowhere in the memo")
+        for seen, other in rendered.items():
+            assert md != other, (
+                f"{holder}.{field}: ${magnitude:,} and ${seen:,} render the "
+                f"same memo — the reader cannot tell which figure was supplied")
+        rendered[magnitude] = md
+
+
+def test_g14_covers_every_dollar_field():
+    """
+    Guard the guard, in G9's shape. Every numeric field on every schema
+    dataclass is either swept by G14 as a dollar magnitude or named in
+    NON_DOLLAR_NUMERIC with what it is instead. A dollar field added to the
+    schema without a decision here reds.
+    """
+    import dataclasses
+    import typing
+
+    from creditmemo.data import schema as schema_module
+
+    numeric = set()
+    for name in dir(schema_module):
+        obj = getattr(schema_module, name)
+        if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
+            continue
+        hints = typing.get_type_hints(obj)
+        for f in dataclasses.fields(obj):
+            t = hints[f.name]
+            args = set(typing.get_args(t)) or {t}
+            if args & {int, float}:
+                numeric.add(f.name)
+
+    assert numeric, "no numeric fields found — this gate would pass vacuously"
+    covered = {field for _, field in DOLLAR_FIELDS}
+    missing = numeric - covered - set(NON_DOLLAR_NUMERIC)
+    assert not missing, f"numeric fields with no dollar/not-dollar decision: {sorted(missing)}"
+    stale = (covered | set(NON_DOLLAR_NUMERIC)) - numeric
+    assert not stale, f"named here but no longer a numeric schema field: {sorted(stale)}"
+
+
+def test_g14_the_revenue_table_and_the_revenue_trend_agree():
+    """
+    R24's corollary, measured rather than assumed.
+
+    `FinancialData.revenue_trend` is computed on the raw values and was always
+    right; the table's *rendering* was the lossy part, so a memo could say
+
+        | Revenue | $0.00MM | $0.00MM | $0.00MM |
+        **Revenue Trend:** Increasing — revenue has been increasing ...
+
+    — three identical figures under a sentence asserting they differ. The
+    prediction was that fixing the formatter resolves this with no change to
+    the trend. It does, and this is what holds it: whenever the memo claims a
+    direction, the rendered endpoints must show one.
+
+    Red-proof (must fail): the unconditional `$MM` divide in
+    creditmemo/money.py — with it, the y1=$1,000 / y3=$4,999 case below renders
+    two identical cells under "increasing".
+    Observed: 66 failed, 361 passed; this gate is 1 of the 66.
+    """
+    cases = [(1_000, 4_999, "increasing"), (4_999, 1_000, "decreasing"),
+             (1_000, 1_000, "stable"), (0, 4_999, "increasing"),
+             (4_999, 0, "decreasing")]
+    for y1, y3, direction in cases:
+        md = CreditMemo(_deal(financials=FinancialData(
+            revenue_y1=y1, revenue_y3=y3))).to_markdown()
+        assert f"revenue has been {direction}" in md, (
+            f"revenue_y1={y1}, revenue_y3={y3}: the memo does not state "
+            f"{direction!r}")
+        row = [line for line in md.split("\n") if line.startswith("| Revenue |")]
+        assert len(row) == 1, row
+        first, last = row[0].split("|")[2].strip(), row[0].split("|")[4].strip()
+        if direction == "stable":
+            assert first == last, f"'stable' over cells that differ: {row[0]!r}"
+        else:
+            assert first != last, (
+                f"the memo says revenue has been {direction} and renders the "
+                f"two endpoints identically: {row[0]!r}")
+
+
+# ── G14b — an element of a list field is a caller-supplied string ────────────
+
+def test_g14b_an_empty_list_element_is_absence():
+    """
+    F11. R18 moved `closing_date`/`maturity_date` onto `fields.is_supplied` so
+    an empty string could not render `| Anticipated Closing |  |`. The rule was
+    never extended to the elements *inside* a `List[str]`, and
+    `conditions=["Real condition", "", "   "]` rendered
+
+        - Real condition          <- Executive Summary
+        -
+        -
+        1. Real condition         <- Conditions of Approval
+        2.
+        3.
+
+    An empty numbered condition in an IC memo is the same object as the empty
+    table row, and worse: the number is a label the package supplied, so it
+    reads as a condition of approval the reader's copy has lost.
+
+    THE PROPERTY: a list whose empty and whitespace elements are removed must
+    render byte-identically to the same list written without them. Compared
+    against rendered output, not against `fields.supplied_items`, so a section
+    that reaches its own conclusion about `""` is caught whichever mechanism
+    it used.
+
+    Red-proof (must fail): revert either site to `deal.conditions` —
+    creditmemo/sections/executive.py or creditmemo/sections/recommendation.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 1 failed, 426 passed for each site reverted, and 1 failed,
+    426 passed with both reverted — this gate is the only one that sees it,
+    which is why it compares whole renderings rather than one section's.
+    """
+    padded = CreditMemo(_deal(conditions=[
+        "Receipt of final appraisal", "", "   ", "\t", "Environmental review",
+    ])).to_markdown()
+    clean = CreditMemo(_deal(conditions=[
+        "Receipt of final appraisal", "Environmental review",
+    ])).to_markdown()
+    assert padded == clean, (
+        "an empty condition renders as something.\nOnly in the padded "
+        f"rendering: {sorted(set(padded.split(chr(10))) - set(clean.split(chr(10))))}")
+
+    # Not vacuous: the surviving conditions must actually reach both sections,
+    # numbered from 1, or the gate above would pass on a package that dropped
+    # every condition.
+    assert "- Receipt of final appraisal" in clean
+    assert "1. Receipt of final appraisal" in clean
+    assert "2. Environmental review" in clean
+
+    # A list with nothing in it but empties is an empty list, so neither the
+    # Executive Summary preamble nor the Conditions heading is emitted over
+    # nothing — R4's bare-heading defect, in the shape F11 reaches it.
+    empties = CreditMemo(_deal(conditions=["", "  "])).to_markdown()
+    none_at_all = CreditMemo(_deal(conditions=[])).to_markdown()
+    assert empties == none_at_all
+    assert "### Conditions of Approval" not in empties
+    assert "**Subject to the following conditions:**" not in empties
+
+
+def test_g14b_whitespace_is_absence_for_an_optional_string_too():
+    """
+    F11's other half. `fields.is_supplied` tested `bool(value)`, so `""` was
+    absence and `"   "` was a statement — and `mission="   "` rendered
+    `### Mission` above a blank line, which is R4's bare heading arriving by a
+    different route. One rule now covers both.
+
+    Red-proof (must fail): restore `return bool(value)` in
+    creditmemo/fields.py.
+    Command: as above.
+    Observed: 2 failed, 425 passed — this gate and its list half.
+    `test_g9_the_optional_string_rule_is_stated` stays green, because it
+    exercises `""` and never `"   "`: that is the hole this closes.
+    """
+    from creditmemo import fields as fields_module
+
+    assert fields_module.is_supplied("   ") is False
+    assert fields_module.is_supplied("\t\n") is False
+    assert fields_module.is_supplied(" x ") is True
+
+    for cls_name, field in _optional_str_fields():
+        blank = CreditMemo(_deal_with_string(cls_name, field, "   ")).to_markdown()
+        absent = CreditMemo(_deal_with_string(cls_name, field, None)).to_markdown()
+        assert blank == absent, (
+            f"{cls_name}.{field}: a whitespace-only string renders differently "
+            f"from an absent one.\nOnly in the blank rendering: "
+            f"{sorted(set(blank.split(chr(10))) - set(absent.split(chr(10))))}")
+
+
+# ── F16 — section_count is a fact about the memo, not about its text ─────────
+
+def test_the_section_count_is_not_moved_by_caller_prose():
+    """
+    F16. `section_count()` counted occurrences of `"\\n## "` in the rendered
+    Markdown. The memo reproduces caller prose verbatim — that is the whole
+    point of the input-fidelity work — so a caller who wrote a `## ` line into
+    `deal_summary`, a mission or an impact narrative was counted as a section:
+    a seven-section memo reported eight.
+
+    Red-proof (must fail): restore
+    `return self.to_markdown().count("\\n## ")` in creditmemo/memo.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 1 failed, 426 passed — "a '## ' line in deal_summary moved the
+    section count from 7 to 8".
+    """
+    from creditmemo.renderers import markdown as markdown_module
+
+    plain = CreditMemo(_deal()).section_count()
+    assert plain == 7, f"the memo has seven sections and reports {plain}"
+
+    for field, value in [
+        ("deal_summary", "Background\n\n## Market Overview\n\nThe borrower."),
+        ("deal_summary", "## A\n\n## B\n\n## C"),
+    ]:
+        inflated = CreditMemo(_deal(**{field: value})).section_count()
+        assert inflated == plain, (
+            f"a '## ' line in {field} moved the section count from {plain} to "
+            f"{inflated}")
+
+    # And the number is the renderer's own list, not a second copy of it that
+    # can drift: every section in that tuple emits exactly one `## ` heading.
+    md = CreditMemo(_deal()).to_markdown()
+    assert md.count("\n## ") == len(markdown_module.SECTIONS)
+
+
+# ── F10 — the memo does not name a section it does not contain ───────────────
+
+def test_the_memo_does_not_point_at_a_section_it_does_not_contain():
+    """
+    F10. The Deal Summary row was
+    `lt.use_of_proceeds or 'See Transaction Structure'`, so an unsupplied field
+    printed
+
+        | Use of Proceeds | See Transaction Structure |
+
+    while `### Use of Proceeds` appeared nowhere in the memo — sections/
+    transaction.py gates that heading on the same field. The memo referred an
+    Investment Committee to a section it did not contain, and the referral was
+    produced by the field's *absence*, so it appeared on exactly the deals where
+    it was wrong.
+
+    Two properties, because the narrow one alone would let the fallback come
+    back under another name: the row and the heading appear together or not at
+    all, and no table cell in the memo refers to a heading the memo lacks.
+
+    Red-proof (must fail): restore the `or 'See Transaction Structure'`
+    fallback in creditmemo/sections/executive.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 2 failed, 425 passed — this gate, and
+    test_g14b_whitespace_is_absence_for_an_optional_string_too, which sees the
+    same fallback from the other side.
+    """
+    for supplied in [None, "", "   ", "Acquisition and renovation"]:
+        md = CreditMemo(_deal(loan_terms=LoanTerms(
+            deal_type="loan", amount=2_500_000,
+            use_of_proceeds=supplied))).to_markdown()
+        row = "| Use of Proceeds |" in md
+        heading = "### Use of Proceeds" in md
+        assert row == heading, (
+            f"use_of_proceeds={supplied!r}: Deal Summary row present={row}, "
+            f"section heading present={heading}")
+
+    headings = set()
+    referrals = []
+    for supplied in [None, "Acquisition and renovation"]:
+        md = CreditMemo(_deal(loan_terms=LoanTerms(
+            deal_type="loan", amount=2_500_000,
+            use_of_proceeds=supplied))).to_markdown()
+        headings = {line.lstrip("#").strip() for line in md.split("\n")
+                    if line.startswith("#")}
+        for line in md.split("\n"):
+            if not line.startswith("|"):
+                continue
+            for cell in line.split("|"):
+                cell = cell.strip()
+                if cell.startswith("See "):
+                    referrals.append((cell, cell[len("See "):], sorted(headings)))
+    unmet = [(cell, target) for cell, target, hs in referrals if target not in hs]
+    assert not unmet, (
+        f"table cells referring an IC to a section the memo does not have: "
+        f"{unmet}")
+
+
+# ── F12 — what the .docx adds that the Markdown does not have ───────────────
+
+def test_the_only_thing_the_docx_adds_is_an_empty_paragraph(tmp_path):
+    """
+    F12. README.md said the .docx adds "nothing that has no line behind it"
+    while `render`'s own docstring said, correctly, "nothing *carrying text*".
+    The renderer appends an empty spacer paragraph after every table — Word runs
+    a table into the next heading without one — and emits each section rule as
+    an empty paragraph with a bottom border. Measured on the quickstart deal:
+    6 tables, 13 empty paragraphs, of which 7 are rules and 6 are spacers.
+
+    The README now carries the qualifier and those figures. This gates the
+    property behind them, which the README cannot: every empty paragraph in the
+    document is a rule or a table spacer, and there are exactly as many of each
+    as the Markdown has rules and tables.
+
+    Red-proof (must fail): add a second `doc.add_paragraph()` to `_add_table`
+    in creditmemo/renderers/docx.py.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
+    Observed: 1 failed, 426 passed — "31 empty paragraphs: 7 rules + 24
+    spacers, for 12 Markdown tables".
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _fully_populated_deal()
+    md = CreditMemo(deal).to_markdown()
+    path = str(tmp_path / "spacers.docx")
+    CreditMemo(deal).save_docx(path)
+    document = _docx.Document(path)
+
+    md_rules = sum(1 for line in md.split("\n") if line.strip() == "---")
+    md_tables = len(_table_headings(md))
+
+    border = ("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+              "pBdr")
+    empties = [p for p in document.paragraphs if not p.text.strip()]
+    rules = [p for p in empties if p._p.find(f".//{border}") is not None]
+    spacers = [p for p in empties if p not in rules]
+
+    assert len(rules) == md_rules, (
+        f"{len(rules)} bordered empty paragraphs for {md_rules} Markdown rules")
+    assert len(spacers) == md_tables, (
+        f"{len(empties)} empty paragraphs: {len(rules)} rules + "
+        f"{len(spacers)} spacers, for {md_tables} Markdown tables")
+    assert len(empties) == md_rules + md_tables, (
+        f"the .docx has {len(empties)} empty paragraphs and the Markdown "
+        f"accounts for {md_rules + md_tables}")

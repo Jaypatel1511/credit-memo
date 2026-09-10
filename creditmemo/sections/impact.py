@@ -1,6 +1,7 @@
 """Impact Analysis section generator."""
 from creditmemo import fields
 from creditmemo.data.schema import DealProfile
+from creditmemo.money import dollars
 
 #: (attribute, affirmative, negative) for the tri-state eligibility flags, in
 #: field order. A flag set to ``False`` is a statement the caller made and gets
@@ -66,7 +67,10 @@ def generate(deal: DealProfile) -> str:
         total_jobs = imp.jobs_created + imp.jobs_retained
         if total_jobs > 0:
             cost_per_job = deal.loan_terms.amount / total_jobs
-            lines.append(f"| Cost per Job | ${cost_per_job:,.0f} |")
+            # `dollars`, not `money`: a cost per job is a derived exact
+            # figure and the `$MM` unit would only coarsen it. Both come from
+            # creditmemo.money, so neither site formats its own.
+            lines.append(f"| Cost per Job | {dollars(cost_per_job)} |")
 
     lines.append("")
     lines.append("### Target Market & Eligibility")

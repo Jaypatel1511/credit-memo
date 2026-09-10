@@ -101,10 +101,13 @@ credit-memo imports nothing outside the standard library. Only the optional
 `save_docx()` writes headings, paragraphs, bulleted lists, section rules and
 **every table in the memo as a real Word table** — deal summary, proposed terms,
 NMTC structure, historical financials, balance sheet summary, credit metrics,
-projections, impact metrics, risk factors and the IC signature block: ten in a
-memo with all of them populated. Tables use the built-in `Table Grid` style with
-a bold header row, and the rules between sections are paragraph borders rather
-than rows of underscores.
+projections, impact metrics, high risk factors, medium risk factors,
+low risk factors and the IC signature block: twelve in a memo with all of them
+populated.
+Risk factors are one table per severity, so a memo carrying only `High` risks
+renders ten. Tables use the built-in `Table Grid` style with a bold header row,
+and the rules between sections are paragraph borders rather than rows of
+underscores.
 
 **Numbered lists keep their numbers as text.** Conditions of Approval and any
 ordered list you write into a text field arrive as ordinary paragraphs whose
@@ -123,8 +126,13 @@ and nothing is silently stripped. `save_markdown()` accepts them.
 
 The .docx is a pure function of the Markdown the same deal produces: every
 heading, paragraph, list item, rule and table in the Word file comes from a line
-of that Markdown, and nothing is added that has no line behind it. It does not
-apply column widths, merged cells, number alignment, or a firm template.
+of that Markdown, and **nothing carrying text** is added that has no line behind
+it. Empty paragraphs are added: one after each table, as the spacer Word needs
+to keep a table off the next heading, and one per section rule. On the quickstart
+deal above that is 6 tables and 13 empty paragraphs — 7 rules and 6 spacers. The
+qualifier used to be missing here and present in `render`'s own docstring, which
+is the direction that matters least and reads worst. It does not apply column
+widths, merged cells, number alignment, or a firm template.
 
 > **credit-memo 0.2.0 and 0.1.0 printed the memo's front matter twice** in every
 > Word file — the title, the deal name and the whole Fund / Prepared By / Date /
@@ -132,6 +140,31 @@ apply column widths, merged cells, number alignment, or a firm template.
 > Markdown, in a different shape. **0.1.0 additionally dropped every table.** If
 > you generated Word memos with either release, regenerate them. See the
 > [changelog](https://github.com/Jaypatel1511/credit-memo/blob/main/CHANGELOG.md).
+
+---
+
+## How Dollar Figures Are Written
+
+A figure is written in the `$MM` unit only where that unit is precise enough to
+describe it. Two decimals of `$MM` resolve to $10,000, so the crossover is
+**$1,000,000** — the point where $10,000 is one percent of the figure. At or
+above it you get `$2.50MM`; below it you get exact dollars and cents, `$4,999`
+or `$4,999.60`, with the cents suppressed when they are zero. A supplied zero is
+`$0`. Negative figures lead with the sign: `-$4,000`, `-$100.00MM`.
+
+This means one table can mix the two — `| Revenue | $900,000 |` above
+`| EBITDA | $1.10MM |`. That is deliberate. Through 0.2.1 the units were kept
+consistent by dividing everything by a million at two decimals, which meant
+**every figure below $5,000 printed as `$0.00MM`** — the same characters a
+stated zero prints. A $4,999 cash balance and a zero cash balance reached the
+Investment Committee as one string. The borrower snapshot was worse: one
+decimal, so `total_assets=49_000` printed `$0.0MM`. If you generated memos for
+microenterprise or small-business deals with 0.2.0 or 0.2.1, **the small figures
+in them are wrong** — regenerate them.
+
+The loan amount is the one figure written twice: `$2,500,000 ($2.50MM)`, or just
+`$250,000` below the crossover, where the parenthesised form would only be a
+coarser copy of the number beside it.
 
 ---
 
@@ -166,16 +199,21 @@ silence.
 
 The same principle applies to figures. Every `Optional` field is consulted with
 `is not None` — never for truthiness — so a supplied `0` is rendered as the
-number the caller stated: no cash on hand as `$0.00MM`, a 0% forgivable loan or
+number the caller stated: no cash on hand as `$0`, a 0% forgivable loan or
 QLICI B tranche as `0.00%`, and a revenue collapse from $5MM to zero as
 `Revenue Trend: Decreasing` rather than as no line at all. A field a caller
 never filled in is `None`, and only that renders as `N/A`.
 
-The one exception is `Optional[str]`, where the falsy value is the empty string.
-`""` states nothing, and the fields that hold one — a mission, a collateral
-description, an impact narrative — each render as a section heading with the
-string beneath it, so an empty string is treated as absence rather than
-producing a heading over an empty body.
+The one exception is `Optional[str]`, where the falsy value is the empty string
+— and any string that is only whitespace, which states exactly as much. The
+reason is not that these fields all render as headings: there are 16 of them and
+that is true of six. The reason is that **an optional string is always rendered
+behind a label the package supplies** — a heading, a table row label, a bold
+prefix — and the label is emitted because the string is. A string that says
+nothing therefore produces a label with nothing after it: `| Anticipated Closing
+|  |`, or `### Mission` above a blank line, or a numbered condition that is just
+`2.`. The same rule governs the elements inside `conditions`, so an empty
+condition is dropped and the rest are renumbered.
 
 And a deal with no `risks` says so as a fact about its inputs. It does not
 claim the deal has no risks; the package has no way to know that.

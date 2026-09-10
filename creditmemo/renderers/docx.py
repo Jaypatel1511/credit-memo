@@ -63,9 +63,9 @@ def _clean(text: str) -> str:
     Strip Markdown emphasis markers from text bound for a Word run.
 
     Applied to every text branch. Before 0.2.1 only the plain-paragraph branch
-    did this, so a bullet such as ``- **Total Assets:** $8.0MM`` reached Word as
-    the literal characters ``**Total Assets:** $8.0MM`` — raw Markdown syntax,
-    in the document handed to an Investment Committee.
+    did this, so a bullet such as ``- **Total Assets:** $8.00MM`` reached Word
+    as the literal characters ``**Total Assets:** $8.00MM`` — raw Markdown
+    syntax, in the document handed to an Investment Committee.
 
     The rule itself lives in :mod:`creditmemo.text`, shared with the table-cell
     splitter. This branch used to delete every ``*`` while that one deleted

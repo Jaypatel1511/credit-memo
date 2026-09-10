@@ -1,14 +1,20 @@
 """Financial Analysis section generator."""
 from creditmemo.data.schema import DealProfile, _reject_fractional_ltv
-
-
-def _fmt(val, prefix="$", suffix="", divisor=1e6, decimals=2) -> str:
-    if val is None:
-        return "N/A"
-    return f"{prefix}{val/divisor:,.{decimals}f}{suffix}MM"
+from creditmemo.money import money
 
 
 def _fmt_ratio(val, suffix="x", decimals=2) -> str:
+    """
+    A multiple or a percentage, as the memo prints it.
+
+    NOT fixed here, and reported rather than patched: this carries R24's
+    property in the non-money half of the formatter surface. Two decimals mean
+    ``_fmt_ratio(0.001)`` is ``0.00x`` — the same characters a stated DSCR of
+    zero produces — and one decimal means ``_fmt_ratio(0.04, "%", 1)`` is
+    ``0.0%``. ``creditmemo.fields.rate`` has it too. R24 ruled on dollar
+    magnitudes; the formatter sweep that covers ratios and rates is 0.3.0, and
+    doing it here would be an ungated change to numbers an IC reads.
+    """
     if val is None:
         return "N/A"
     return f"{val:.{decimals}f}{suffix}"
@@ -46,9 +52,9 @@ def generate(deal: DealProfile) -> str:
         "",
         "| Metric | Year -2 | Year -1 | Most Recent |",
         "|--------|---------|---------|-------------|",
-        f"| Revenue | {_fmt(f.revenue_y1)} | {_fmt(f.revenue_y2)} | {_fmt(f.revenue_y3)} |",
-        f"| Net Income | {_fmt(f.net_income_y1)} | {_fmt(f.net_income_y2)} | {_fmt(f.net_income_y3)} |",
-        f"| EBITDA | {_fmt(f.ebitda_y1)} | {_fmt(f.ebitda_y2)} | {_fmt(f.ebitda_y3)} |",
+        f"| Revenue | {money(f.revenue_y1)} | {money(f.revenue_y2)} | {money(f.revenue_y3)} |",
+        f"| Net Income | {money(f.net_income_y1)} | {money(f.net_income_y2)} | {money(f.net_income_y3)} |",
+        f"| EBITDA | {money(f.ebitda_y1)} | {money(f.ebitda_y2)} | {money(f.ebitda_y3)} |",
         "",
     ]
 
@@ -70,13 +76,13 @@ def generate(deal: DealProfile) -> str:
             "|------|--------|",
         ]
         if f.total_assets is not None:
-            lines.append(f"| Total Assets | {_fmt(f.total_assets)} |")
+            lines.append(f"| Total Assets | {money(f.total_assets)} |")
         if f.total_liabilities is not None:
-            lines.append(f"| Total Liabilities | {_fmt(f.total_liabilities)} |")
+            lines.append(f"| Total Liabilities | {money(f.total_liabilities)} |")
         if f.net_assets_equity is not None:
-            lines.append(f"| Net Assets / Equity | {_fmt(f.net_assets_equity)} |")
+            lines.append(f"| Net Assets / Equity | {money(f.net_assets_equity)} |")
         if f.cash is not None:
-            lines.append(f"| Cash & Equivalents | {_fmt(f.cash)} |")
+            lines.append(f"| Cash & Equivalents | {money(f.cash)} |")
         lines.append("")
 
     lines += [
@@ -103,7 +109,7 @@ def generate(deal: DealProfile) -> str:
         ]
         if f.projected_revenue_y1 is not None:
             lines.append(
-                f"| Revenue | {_fmt(f.projected_revenue_y1)} | — | — |"
+                f"| Revenue | {money(f.projected_revenue_y1)} | — | — |"
             )
         # Any of the three years, not just Year 1. Gating all three on
         # `projected_dscr_y1` is the `has_balance`/`cash` defect of 0.2.0 in

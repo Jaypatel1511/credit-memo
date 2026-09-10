@@ -1,6 +1,7 @@
 """Transaction Structure section generator."""
 from creditmemo import fields
 from creditmemo.data.schema import DealProfile, DEAL_TYPES
+from creditmemo.money import dollars, money, money_with_mm
 from creditmemo.tables import escape_cell
 
 
@@ -17,7 +18,7 @@ def generate(deal: DealProfile) -> str:
         f"| Term | Detail |",
         f"|------|--------|",
         f"| Deal Type | {escape_cell(DEAL_TYPES.get(lt.deal_type, lt.deal_type))} |",
-        f"| Loan Amount | ${lt.amount:,.0f} (${lt.amount_mm:.2f}MM) |",
+        f"| Loan Amount | {money_with_mm(lt.amount)} |",
         f"| Interest Rate | {rate_str} |",
     ]
 
@@ -41,7 +42,7 @@ def generate(deal: DealProfile) -> str:
     if lt.origination_fee_pct:
         lines.append(
             f"| Origination Fee | {lt.origination_fee_pct*100:.2f}% "
-            f"(${lt.origination_fee:,.0f}) |"
+            f"({dollars(lt.origination_fee)}) |"
         )
 
     lines.append("")
@@ -95,12 +96,16 @@ def generate(deal: DealProfile) -> str:
             "",
             f"| Component | Amount |",
             f"|-----------|--------|",
-            f"| QEI (NMTC Allocation) | ${nt.nmtc_allocation/1e6:.2f}MM |",
-            f"| Total NMTCs (39%) | ${nt.total_nmtcs/1e6:.2f}MM |",
+            f"| QEI (NMTC Allocation) | {money(nt.nmtc_allocation)} |",
+            f"| Total NMTCs (39%) | {money(nt.total_nmtcs)} |",
+            # `credit_price` deliberately does not go through creditmemo.money:
+            # it is dollars per $1 of credit, a price quoted in the unit the
+            # NMTC market quotes it in, not a magnitude in a column of
+            # magnitudes. See the module docstring there.
             f"| Credit Price | ${nt.credit_price:.2f}/$1 |",
-            f"| Investor Equity | ${nt.investor_equity/1e6:.2f}MM |",
+            f"| Investor Equity | {money(nt.investor_equity)} |",
             f"| CDE Fee | {nt.cde_fee_rate*100:.1f}% |",
-            f"| Estimated Net Subsidy | ${nt.net_subsidy/1e6:.2f}MM |",
+            f"| Estimated Net Subsidy | {money(nt.net_subsidy)} |",
         ]
         if fields.is_supplied(nt.cde_name):
             lines.append(f"| CDE | {escape_cell(nt.cde_name)} |")

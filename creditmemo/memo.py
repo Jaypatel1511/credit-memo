@@ -2,7 +2,9 @@
 CreditMemo — main public API for credit memo generation.
 """
 from creditmemo.data.schema import DealProfile
-from creditmemo.renderers.markdown import render as render_md, save as save_md
+from creditmemo.renderers.markdown import (
+    SECTIONS, render as render_md, save as save_md,
+)
 from creditmemo.renderers.docx import render as render_docx
 
 
@@ -43,5 +45,16 @@ class CreditMemo:
             print(line)
 
     def section_count(self) -> int:
-        """Return the number of sections in the memo."""
-        return self.to_markdown().count("\n## ")
+        """
+        Return the number of sections in the memo.
+
+        F16. This counted occurrences of ``"\\n## "`` in the rendered Markdown,
+        so it was a property of the memo's *text* and not of its structure. The
+        memo reproduces caller prose verbatim — that is the whole point of the
+        input-fidelity work — so a ``## `` line inside ``deal_summary``, a
+        mission or an impact narrative was counted as a section, and a
+        seven-section memo reported eight. It is the length of
+        :data:`creditmemo.renderers.markdown.SECTIONS`, which is the tuple the
+        renderer itself iterates; no input can move it.
+        """
+        return len(SECTIONS)

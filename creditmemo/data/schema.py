@@ -62,9 +62,16 @@ SECTORS = {
 #: above 100% is not a credit control. `ltv` is rendered unscaled, so anything
 #: in that band except zero reaches the memo as an LTV of one percent or less:
 #: under a cent of debt per dollar of collateral. Nothing legitimate lives
-#: there, so refusing the band costs no real input. Above it the two readings
-#: both produce coherent numbers and guessing between them would be the silent
-#: interpretation this release exists to remove.
+#: there, so refusing the band costs no real input.
+#:
+#: F17: the band is where the *fraction reading* stops being the only coherent
+#: one, and it is not a claim that 1.0% is the frontier of the absurd on the
+#: rendered side. `ltv = 1.0000001` is above the band, is accepted, and renders
+#: `1.0%` — the same reading the band exists to refuse. That is deliberate and
+#: it is the direction to fail in: above 1.0 the two readings both produce
+#: coherent numbers, and choosing between them would be the silent
+#: interpretation this release exists to remove, so the value is rendered as
+#: written. What the band buys is the range where no such choice exists.
 LTV_FRACTION_BAND_MAX = 1.0
 
 

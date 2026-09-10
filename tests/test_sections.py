@@ -17,9 +17,21 @@ def test_borrower_section(sample_deal):
 
 
 def test_transaction_section(sample_deal):
+    """
+    F15. The amount assertion here was
+
+        assert "$2.50MM" in result or "2,500,000" in result
+
+    — the only top-level `or` in the suite, and the sole gate on the
+    CHANGELOG's claim that the memo states an amount in one format. An `or`
+    over the two formats is the negation of that claim: it passes whichever
+    one the code emits, and it would have passed on a memo that emitted a
+    different one in each section, which is the class R21 closed for the LTV.
+    R24 settled what the row should say, so it is asserted.
+    """
     result = transaction.generate(sample_deal)
     assert "Transaction Structure" in result
-    assert "$2.50MM" in result or "2,500,000" in result
+    assert "| Loan Amount | $2,500,000 ($2.50MM) |" in result
 
 
 def test_financial_section(sample_deal):

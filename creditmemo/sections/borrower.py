@@ -1,6 +1,7 @@
 """Borrower Profile section generator."""
 from creditmemo import fields
 from creditmemo.data.schema import DealProfile, BORROWER_TYPES, SECTORS
+from creditmemo.money import money
 
 #: (attribute, affirmative, negative) for the tri-state certification flags, in
 #: field order. Each flag carries its own negative string rather than borrowing
@@ -77,13 +78,19 @@ def generate(deal: DealProfile) -> str:
 
     # `is not None`, not truthiness: a borrower with total assets of exactly $0
     # supplied that figure, and it is more material than most.
+    #
+    # R24. These two were the coarsest money sites in the package: `$MM` at
+    # *one* decimal resolves to $100,000, so `total_assets=49_000` rendered
+    # `$0.0MM` — the stated-zero rendering, for a figure ten times larger than
+    # the one the two-decimal sites lost. They go through the same formatter as
+    # every other dollar figure now.
     if b.total_assets is not None or b.annual_revenue is not None:
         lines.append("### Financial Snapshot")
         lines.append("")
         if b.total_assets is not None:
-            lines.append(f"- **Total Assets:** ${b.total_assets/1e6:.1f}MM")
+            lines.append(f"- **Total Assets:** {money(b.total_assets)}")
         if b.annual_revenue is not None:
-            lines.append(f"- **Annual Revenue:** ${b.annual_revenue/1e6:.1f}MM")
+            lines.append(f"- **Annual Revenue:** {money(b.annual_revenue)}")
         lines.append("")
 
     return "\n".join(lines)
