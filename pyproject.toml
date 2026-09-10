@@ -4,14 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "credit-memo"
-version = "0.2.0"
+version = "0.2.1"
 description = "Generate IC credit memos from structured deal inputs — CDFI loans, NMTC deals, and impact investments"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-dependencies = [
-    "pandas>=1.4.0",
-]
+# credit-memo builds strings and, optionally, a Word document. It imports
+# nothing outside the standard library. 0.2.0 and 0.1.0 declared a hard
+# dependency on pandas that no module in the package ever imported, so every
+# install pulled pandas and numpy for nothing and inherited their platform
+# constraints.
+dependencies = []
 
 [project.optional-dependencies]
 docx = ["python-docx>=0.8.11"]

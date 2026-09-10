@@ -142,3 +142,23 @@ def test_a_lone_delimiter_shaped_line_is_not_a_table_and_is_not_eaten():
     """
     assert separator_index(["|---|---|"]) is None
     assert block_to_rows(["|---|---|"]) == [["---", "---"]]
+
+
+def test_a_table_block_that_runs_to_the_last_line_is_still_a_table():
+    """
+    `iter_segments` flushes an open block when a non-table line ends it, and
+    again after the loop. Every memo ends with a blank line, so the second
+    flush never fires on package output — but `iter_segments` is exported and
+    the .docx renderer drives its whole output from it, so the two paths must
+    agree. They do; this is the line that says so.
+    """
+    lines = ["| a | b |", "|---|---|", "| 1 | 2 |"]
+    assert list(iter_segments(lines)) == [("table", lines)]
+    assert content_rows(lines) == [["a", "b"], ["1", "2"]]
+
+
+def test_an_empty_line_has_no_separator_shape():
+    """`split_row` always yields at least one cell, so an empty line reaches
+    the all-cells-non-empty test and fails it rather than the length guard."""
+    assert split_row("") == [""]
+    assert has_separator_shape("") is False

@@ -97,18 +97,35 @@ def main(path: str) -> int:
     failures = []
 
     # Every non-separator Markdown table row must have become a Word table row.
+    # 0.2.1 removed the hand-built header table: every table in the .docx now
+    # comes from the Markdown, so nothing is subtracted here any more.
     md_rows = len(content_rows(markdown.split("\n")))
-    header_rows = len(doc.tables[0].rows)
     docx_rows = sum(len(t.rows) for t in doc.tables)
-    if docx_rows - header_rows != md_rows:
+    if docx_rows != md_rows:
         failures.append(
-            "row conservation: markdown has %d content rows, .docx has %d "
-            "rows beyond the %d-row header table"
-            % (md_rows, docx_rows - header_rows, header_rows)
+            "row conservation: markdown has %d content rows, .docx has %d"
+            % (md_rows, docx_rows)
         )
 
     if len(doc.tables) < 2:
         failures.append("only %d table(s) in the .docx" % len(doc.tables))
+
+    # R5: nothing may appear in the .docx more often than in the Markdown. The
+    # memo title and the Fund/Prepared By/Date/IC Date block were emitted twice
+    # by every release before 0.2.1.
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for probe in ("Investment Committee Memorandum",
+                  "Fund: %s" % deal.fund_name,
+                  "Prepared By: %s" % deal.prepared_by):
+        md_count = sum(
+            1 for line in markdown.split("\n")
+            if line.replace("**", "").strip().lstrip("# ") == probe
+        )
+        if paragraphs.count(probe) != md_count:
+            failures.append(
+                "%r appears %d time(s) in the .docx and %d time(s) in the "
+                "Markdown" % (probe, paragraphs.count(probe), md_count)
+            )
 
     for probe in ("1.35", "4.50%", "8,500"):
         if probe not in blob:

@@ -10,3 +10,8 @@ __pycache__/
 # `python -m build` leaves an extracted sdist tree behind when it cannot
 # clean up its temp directory.
 /credit_memo-*/
+
+# scripts/smoke_installed_wheel.py writes its .docx into the working directory,
+# and `pytest --cov` (or any coverage run) leaves .coverage behind.
+/smoke.docx
+.coverage

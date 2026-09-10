@@ -1,5 +1,40 @@
 """Impact Analysis section generator."""
+from creditmemo import fields
 from creditmemo.data.schema import DealProfile
+from creditmemo.money import dollars
+
+#: (attribute, affirmative, negative) for the tri-state eligibility flags, in
+#: field order. A flag set to ``False`` is a statement the caller made and gets
+#: rendered; a flag left ``None`` is not, and gets nothing.
+TARGET_MARKET_FLAGS = (
+    ("is_low_income_area",   "Low-Income Area",            "Not a Low-Income Area"),
+    ("is_nmtc_eligible",     "NMTC Eligible Census Tract",
+                             "Not an NMTC Eligible Census Tract"),
+    ("is_opportunity_zone",  "Opportunity Zone",           "Not an Opportunity Zone"),
+    ("is_minority_borrower", "Minority Borrower",          "Not a Minority Borrower"),
+    ("is_women_borrower",    "Women Borrower",             "Not a Women Borrower"),
+)
+
+#: What the block says when every eligibility flag is ``None``. Before 0.2.1
+#: this case rendered a bare "### Target Market & Eligibility" heading with
+#: nothing under it at all.
+NO_TARGET_MARKET_FLAGS_TEXT = (
+    "No target-market or eligibility flags were provided."
+)
+
+
+def _target_market_lines(imp) -> list:
+    lines = []
+    for attr, yes, no in TARGET_MARKET_FLAGS:
+        value = getattr(imp, attr)
+        if value is True:
+            lines.append(f"- ✅ {yes}")
+        elif value is False:
+            lines.append(f"- ❌ {no}")
+    if not lines:
+        return [NO_TARGET_MARKET_FLAGS_TEXT, ""]
+    lines.append("")
+    return lines
 
 
 def generate(deal: DealProfile) -> str:
@@ -32,34 +67,21 @@ def generate(deal: DealProfile) -> str:
         total_jobs = imp.jobs_created + imp.jobs_retained
         if total_jobs > 0:
             cost_per_job = deal.loan_terms.amount / total_jobs
-            lines.append(f"| Cost per Job | ${cost_per_job:,.0f} |")
+            # `dollars`, not `money`: a cost per job is a derived exact
+            # figure and the `$MM` unit would only coarsen it. Both come from
+            # creditmemo.money, so neither site formats its own.
+            lines.append(f"| Cost per Job | {dollars(cost_per_job)} |")
 
     lines.append("")
     lines.append("### Target Market & Eligibility")
     lines.append("")
+    lines += _target_market_lines(imp)
 
-    flags = []
-    if imp.is_low_income_area:
-        flags.append("✅ Low-Income Area")
-    if imp.is_nmtc_eligible:
-        flags.append("✅ NMTC Eligible Census Tract")
-    if imp.is_opportunity_zone:
-        flags.append("✅ Opportunity Zone")
-    if imp.is_minority_borrower:
-        flags.append("✅ Minority Borrower")
-    if imp.is_women_borrower:
-        flags.append("✅ Women Borrower")
-
-    if flags:
-        for flag in flags:
-            lines.append(f"- {flag}")
-        lines.append("")
-
-    if imp.census_tract:
+    if fields.is_supplied(imp.census_tract):
         lines.append(f"**Census Tract:** {imp.census_tract}")
         lines.append("")
 
-    if imp.impact_narrative:
+    if fields.is_supplied(imp.impact_narrative):
         lines += ["### Impact Narrative", "", imp.impact_narrative, ""]
 
     return "\n".join(lines)

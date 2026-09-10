@@ -12,6 +12,8 @@ suite and ``scripts/smoke_installed_wheel.py`` count rows with.
 """
 from typing import Iterator, List, Optional, Sequence, Tuple
 
+from creditmemo.text import strip_emphasis
+
 __all__ = [
     "escape_cell",
     "unescape_cell",
@@ -63,8 +65,12 @@ def split_row(line: str) -> List[str]:
     Split one Markdown table row into its cell texts.
 
     Splits on unescaped ``|`` only, drops the leading/trailing delimiters, and
-    unescapes each cell. Markdown bold markers are stripped so table cells read
-    the same way the paragraph path renders them.
+    unescapes each cell. Emphasis markers are stripped through
+    :func:`creditmemo.text.strip_emphasis` — the same function the .docx
+    paragraph path uses, so a table cell and a paragraph of the same document
+    cannot disagree about whether a character is syntax or content. They did:
+    this side stripped only ``**`` while the paragraph side stripped every
+    ``*``, so a lone asterisk survived here and was deleted there.
     """
     stripped = line.strip()
     if stripped.startswith("|"):
@@ -92,7 +98,7 @@ def split_row(line: str) -> List[str]:
         i += 1
     cells.append("".join(buf))
 
-    return [unescape_cell(c).replace("**", "").strip() for c in cells]
+    return [strip_emphasis(unescape_cell(c)).strip() for c in cells]
 
 
 def is_table_line(line: str) -> bool:
@@ -119,6 +125,11 @@ def has_separator_shape(line: str) -> bool:
     requirement does exclude is a block whose second line is ``| | | |`` — an
     all-empty row is not a valid delimiter, so that block has no delimiter and
     every line in it is content.
+
+    The ``not cells`` guard below cannot fire: :func:`split_row` always appends
+    its buffer and so returns at least one cell, and an empty line therefore
+    reaches the all-cells-non-empty test and fails there. It is kept as a
+    precondition on a function this module exports.
     """
     cells = split_row(line)
     if not cells:
@@ -148,18 +159,37 @@ def iter_segments(lines: Sequence[str]) -> Iterator[Tuple[str, object]]:
     a heading are two blocks. The .docx renderer drives its whole output from
     this, and the conservation gates count rows from it, so the two sides cannot
     disagree about where one table stops and the next begins.
+
+    A run of pipe lines is a table only if it carries a delimiter rule where GFM
+    requires one — immediately under the header. A leading ``|`` alone is not
+    enough, and treating it as enough silently turned underwriter prose into a
+    Word table: ``deal_summary="| we structured this as a leveraged loan"``
+    left the Markdown as written and arrived in the .docx as a one-cell table,
+    with the pipe eaten. Every table this package emits has its rule at index 1,
+    so no memo table is affected; a lone pipe line is now what it reads as,
+    which is a sentence.
     """
     block: List[str] = []
+
+    def flush(block):
+        if separator_index(block) is not None:
+            yield "table", block
+        else:
+            for stray in block:
+                yield "text", stray
+
     for line in lines:
         if is_table_line(line):
             block.append(line)
             continue
         if block:
-            yield "table", block
+            for item in flush(block):
+                yield item
             block = []
         yield "text", line
     if block:
-        yield "table", block
+        for item in flush(block):
+            yield item
 
 
 def iter_table_blocks(lines: Sequence[str]) -> Iterator[List[str]]:
@@ -181,6 +211,10 @@ def block_to_rows(block: Sequence[str]) -> List[List[str]]:
     a row is ragged; ragged input should not happen for memos built through
     :func:`escape_cell`, but dropping underwriter text is never the right
     failure mode.
+
+    The empty-``rows`` return cannot be reached through the renderers, for the
+    reason given on :func:`creditmemo.renderers.docx._add_table`; it is a
+    precondition on an exported helper, which callers may hand any block.
     """
     sep = separator_index(block)
     rows = [split_row(line) for i, line in enumerate(block) if i != sep]
