@@ -80,7 +80,7 @@ def _reject_fractional_ltv(value: Optional[float]) -> None:
     Raise if ``ltv`` was supplied on the package's *other* scale.
 
     ``FinancialData.ltv`` is in percentage points and ``LoanTerms.max_ltv`` is a
-    fraction, and through 0.2.1 neither said so. A caller who followed the
+    fraction, and through 0.2.0 neither said so. A caller who followed the
     dominant convention and passed ``0.75`` to both got ``Maximum LTV of 75%``
     beside ``| Loan to Value | 0.8% |`` in one memo — a 75% LTV reaching an
     Investment Committee as 0.8% against a ``<= 80%`` benchmark, in both the
@@ -93,11 +93,13 @@ def _reject_fractional_ltv(value: Optional[float]) -> None:
     and R6 requires a supplied zero to reach the memo — the band below is open
     at the bottom (``0 < value``), which is that exemption, expressed once.
 
-    R22: through 0.2.1 the exemption was *also* written as a ``value == 0``
-    early return above the band. It could never fire, because the band already
-    excluded zero, and the docstring described it as the thing keeping zero out.
-    Measured both ways: with the clause and without it the suite is 340 passed,
-    and the gate on zero passes either way. It was not producing the property.
+    R22: an intermediate build of 0.2.1 *also* wrote the exemption as a
+    ``value == 0`` early return above the band — the band is itself new in
+    0.2.1, so the clause never reached a released version. It could never fire,
+    because the band already excluded zero, and the docstring described it as
+    the thing keeping zero out. Measured both ways: removing it changes no test
+    result, and the gate on zero passes either way. It was not producing the
+    property.
 
     Called from two places, and both are load-bearing (R20). ``__post_init__``
     catches the mistake at construction, where the traceback points at the
@@ -262,7 +264,7 @@ class FinancialData:
         The direction of revenue over the historical period, or ``None`` if
         either endpoint was not supplied.
 
-        ``is not None``, not truthiness. Through 0.2.1 this was gated on
+        ``is not None``, not truthiness. Through 0.2.0 this was gated on
         ``if self.revenue_y1 and self.revenue_y3``, so revenue collapsing
         from $5MM to zero — the most alarming thing this field can express —
         was the one case the memo would not report, and a recovery from zero

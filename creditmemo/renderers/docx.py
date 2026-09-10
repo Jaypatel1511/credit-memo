@@ -153,7 +153,8 @@ def render(deal: DealProfile, path: str) -> None:
     this document asks Word to supply a number, because Word will not supply
     the number the Markdown states.
 
-    0.2.1 did restyle them, and that is the defect this reverts. Word does not
+    An intermediate build of 0.2.1 did restyle them, and that is the defect
+    this reverts — it never reached a released version. Word does not
     restart a numbered list on its own: every ``List Number`` paragraph
     python-docx creates resolves to one continuous numbering definition. A memo
     with a two-item ordered list in ``deal_summary`` and three ``conditions``
@@ -164,7 +165,7 @@ def render(deal: DealProfile, path: str) -> None:
         conditions=["Receipt of appraisal",
                     "Payoff of the 2019 note\n3. Third-party report"]
 
-    0.2.1 guarded against a nearby defect of 0.2.0 — a chronology written as
+    That build guarded against a nearby defect of 0.2.0 — a chronology written as
     ``2019. ...`` / ``2024. ...`` reaching the Investment Committee as items 1.
     and 2. — with a rule that only restyled a run numbered exactly 1..n. That
     rule is gone too, and with it the class: nothing is restyled, so nothing

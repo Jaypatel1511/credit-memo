@@ -35,7 +35,7 @@ Mixed units inside one table are the accepted cost of this: a memo may print
     | EBITDA  | $1.10MM  |
 
 in adjacent rows. Both are true. The alternative — the one that shipped in
-0.2.0 and 0.2.1 — kept the units consistent by making the small figure false.
+0.1.0 and 0.2.0 — kept the units consistent by making the small figure false.
 
 NOTHING NON-ZERO RENDERS AS A STATED ZERO, AT ANY MAGNITUDE. Zero is the single
 string :data:`ZERO`. Any magnitude at or above half a cent carries a non-zero

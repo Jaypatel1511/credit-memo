@@ -7,6 +7,16 @@ Both failure modes were silent in 0.2.0 — nothing raised, nothing warned, and
 the memo read as though the analysis had been done.
 
 Every gate here ships with the mutation that reddens it, in its docstring.
+
+A red-proof records the *failure* count the mutation produced, and not the
+number of tests that still passed alongside it. The failure count is the
+evidence — it names how much of the suite sees the defect. The passed count is
+a running total of everything else in the file, so it goes stale on the next
+commit that adds a test, whatever it tests; it had already gone stale twice by
+0.2.1, once in this module and once in creditmemo/data/schema.py, with the
+staleness reading as a measurement that no longer reproduces. Where a suite
+total is genuinely the point it is anchored to the commit it was taken at
+("at 2031b0a the suite was 284 passed"), which cannot drift.
 """
 import datetime
 import io
@@ -333,7 +343,7 @@ def test_g8_a_false_flag_never_leaves_the_affirmative_claim_unnegated(flag):
     """
     G8. Every line the negative branch renders must survive being read alone.
 
-    Through 0.2.1 the borrower certification block put the negation in a shared
+    Through 0.2.0 the borrower certification block put the negation in a shared
     header and reused the affirmative label list under it, so `is_cdfi_certified
     =False` rendered `**Not certified:** CDFI Certified` — a sentence that
     contradicts itself, and that reaches the Word document as the sentence
@@ -611,12 +621,11 @@ def test_the_readme_names_every_table_the_memo_renders(tmp_path):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 1 failed, 426 passed — "tables the README does not name:
-    ['### Balance Sheet Summary (Most Recent)']". (The passed count moved with
-    the suite; the failure is the same one.)
+    Observed: 1 failed — "tables the README does not name:
+    ['### Balance Sheet Summary (Most Recent)']".
 
     Second red-proof (must fail), for F14: revert `_fully_populated_deal` to the
-    single `High` risk it carried. Observed: 1 failed, 426 passed — the
+    single `High` risk it carried. Observed: 1 failed — the
     rendered table list no longer matches the declared one.
     """
     pytest.importorskip("docx")
@@ -686,7 +695,7 @@ def test_a_control_character_is_refused_by_name_or_stored(
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 5 failed, 335 passed — the five unstorable characters — each
+    Observed: 5 failed — the five unstorable characters — each
     raising lxml's unnamed message instead.
     """
     pytest.importorskip("docx")
@@ -713,7 +722,8 @@ def test_a_control_character_is_refused_by_name_or_stored(
 
 # ── G13 — Word supplies no number, and loses none ────────────────────────────
 #
-# R17. 0.2.1 restyled every ordered-list line into Word's `List Number` style,
+# R17. An intermediate build of 0.2.1 (2031b0a) restyled every ordered-list
+# line into Word's `List Number` style,
 # emitting only the text after the number and letting Word draw its own. The
 # test this replaces asserted exactly that, and passed. What it did not assert
 # is what Word then prints, and Word does not restart a list: every `List
@@ -849,10 +859,10 @@ def test_g13_every_ordered_number_in_the_markdown_is_in_the_word_document(
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
     Observed, with only the ordered-item branch put back and the rest of the
-    renderer left alone: 9 failed, 331 passed — 2 here (two_runs,
+    renderer left alone: 9 failed — 2 here (two_runs,
     embedded_number), 2 in G13's other half, 1 in the declaration gate, and 4 in
     tests/test_docx.py (G1 and G1-prose, loan and nmtc). Reverting the whole
-    file to 2031b0a gives 14 failed, 326 passed; the extra 5 are the
+    file to 2031b0a gives 14 failed; the extra 5 are the
     control-character gate, whose check the same revert removes.
 
     `chronology` stays green under that mutation and is not slack: 2031b0a's
@@ -902,7 +912,7 @@ def test_g13_word_supplies_no_number_in_the_document(label, kwargs, tmp_path):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 9 failed, 331 passed; 2 of them here — two_runs and
+    Observed: 9 failed; 2 of them here — two_runs and
     embedded_number — each naming numFmt='decimal' on the paragraphs Word
     would have numbered itself.
     """
@@ -1130,7 +1140,7 @@ def test_g8_the_declared_flag_constants_are_the_reviewed_ones():
 #: transformation — both apply: a gate that formats its expectation by calling
 #: `creditmemo.fields.rate` follows that function wherever it goes and can
 #: never fail.
-#: R24 added the fifth column. Through 0.2.1 the money rows expected
+#: R24 added the fifth column. Before R24 the money rows expected
 #: `"$0.00MM"` — which is also what a *supplied $4,999* produced, so the gate
 #: for this release's central ruling asserted the violation's own output and
 #: could not distinguish the property from its breach. The probe is a small
@@ -1360,11 +1370,29 @@ def test_g9_the_optional_string_rule_is_stated():
     The one place this fix departs from "every `Optional` field is tested with
     `is not None`", stated as a behaviour rather than left implicit.
 
-    For an `Optional[str]` the falsy value is `""`. An empty string is not a
-    figure a caller stated; rendering it would put a section heading over an
-    empty body, which is the defect R4 closed for the flag blocks. So `""` is
-    treated as absence, uniformly, through one named predicate — and that is
-    gated here so the exception is reviewed rather than incidental.
+    For an `Optional[str]` the falsy value is `""`. An empty or whitespace-only
+    string states nothing, so there is nothing of the caller's for the memo to
+    reproduce and anything printed in its place is the package's own output
+    standing in for content. So `""` is treated as absence, uniformly, through
+    one named predicate — and that is gated here so the exception is reviewed
+    rather than incidental.
+
+    **This docstring used to give the reason as "rendering it would put a
+    section heading over an empty body, which is the defect R4 closed for the
+    flag blocks."** That is true of 6 of the 16 `Optional[str]` fields. R24's
+    round corrected it in `creditmemo/fields.py` and README.md and did not
+    correct it here, in the gate those two cite — so the corrected reason and
+    the reason it replaced were both in the tree, and this was the copy a
+    reader following the citation arrived at. The full enumeration, and the one
+    field that carries no label at all (`DealProfile.deal_summary`), are in
+    `creditmemo.fields.is_supplied`.
+
+    What this gate checks is the predicate and one heading case. The property
+    over all 16 fields is
+    `test_g9_an_empty_optional_string_renders_as_absence` for `""` and
+    `test_g14b_whitespace_is_absence_for_an_optional_string_too` for `"   "`;
+    neither depends on the reason being stated correctly, which is why the
+    stale reason did not redden anything.
     """
     from creditmemo import fields as fields_module
 
@@ -1470,8 +1498,8 @@ def test_g9_an_empty_optional_string_renders_as_absence(cls_name, field):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 1 failed, 339 passed — LoanTerms.closing_date, showing the empty
-    row. Restoring both lines: 2 failed, 338 passed.
+    Observed: 1 failed — LoanTerms.closing_date, showing the empty
+    row. Restoring both lines: 2 failed.
     """
     empty = CreditMemo(_deal_with_string(cls_name, field, "")).to_markdown()
     absent = CreditMemo(_deal_with_string(cls_name, field, None)).to_markdown()
@@ -1800,11 +1828,11 @@ def test_g11_every_caller_supplied_string_survives_into_the_docx(where, tmp_path
         creditmemo/renderers/docx.py — the one that matched any `\d+\.` line
         and emitted only group(2).
         Observed: 7 failed here (every sentinel the memo renders as its own
-        body line); `pytest tests/test_docx.py -k g1_` stayed green, 4 passed.
+        body line); `pytest tests/test_docx.py -k g1_` stayed green.
       * restore the unconditional `.replace("*", "")` in
         creditmemo/text.py's strip_emphasis.
         Observed: 26 failed here — every sentinel, both halves of the document;
-        `pytest tests/test_docx.py -k g1_` stayed green, 4 passed.
+        `pytest tests/test_docx.py -k g1_` stayed green.
     """
     pytest.importorskip("docx")
     deal = _sentinel_deal()
@@ -1845,7 +1873,7 @@ def test_g11_covers_every_free_text_field_on_every_dataclass():
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 1 failed, 339 passed — "free-text fields with no G11 decision:
+    Observed: 1 failed — "free-text fields with no G11 decision:
     [('DealProfile', 'covenants')]".
     """
     import dataclasses
@@ -2093,7 +2121,7 @@ def test_g12_a_post_construction_ltv_is_refused_at_the_render_boundary(
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 3 failed, 337 passed — the three values in the band — each
+    Observed: 3 failed — the three values in the band — each
     reporting "DID NOT RAISE".
     """
     pytest.importorskip("docx")
@@ -2147,7 +2175,7 @@ def test_g12_max_ltv_renders_at_the_same_precision_as_the_ltv_it_caps():
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
-    Observed: 2 failed, 338 passed — this gate, showing "Maximum LTV of 80%"
+    Observed: 2 failed — this gate, showing "Maximum LTV of 80%"
     for max_ltv=0.795, and G9's `max_ltv` zero row, which pins the same
     formatter at "Maximum LTV of 0.0%".
     """
@@ -2529,7 +2557,7 @@ def test_g14_no_non_zero_figure_renders_as_a_stated_zero(magnitude, sign):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 66 failed, 361 passed. 30 of the 66 are this gate's own
+    Observed: 66 failed. 30 of the 66 are this gate's own
     parameters — the 30 of its 60 that fall below the crossover, in both signs;
     the figures already large enough for the $MM form still render correctly,
     which is the point.
@@ -2677,7 +2705,7 @@ def test_g14_every_dollar_field_renders_its_own_magnitude(holder, field):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 66 failed, 361 passed; 17 of the 18 parameters here.
+    Observed: 66 failed; 17 of the 18 parameters here.
     `loan_terms.amount` is the one that survives, because the Amount row prints
     the exact dollars beside the $MM form and always did — which is why the
     formatter sweep alone is not enough, and why this gate reads the memo.
@@ -2739,13 +2767,41 @@ def test_g14_the_revenue_table_and_the_revenue_trend_agree():
 
     — three identical figures under a sentence asserting they differ. The
     prediction was that fixing the formatter resolves this with no change to
-    the trend. It does, and this is what holds it: whenever the memo claims a
-    direction, the rendered endpoints must show one.
+    the trend. It does, and this is what holds it.
+
+    THE PROPERTY, stated as narrowly as it is true: for a pair of revenue
+    endpoints **below the `$MM` crossover**, where the memo renders exact
+    dollars and cents, a claimed direction must be visible in the rendered
+    endpoints. All five cases below are in that range, which is where R24's
+    defect lived — the whole magnitude band that used to collapse to
+    `$0.00MM`.
+
+    THE PROPERTY IS NOT UNIVERSAL, and an earlier version of this docstring
+    wrote it as "whenever the memo claims a direction, the rendered endpoints
+    must show one". Above the crossover that is false, and no case here can
+    reach the instance:
+
+        revenue_y1=1_000_000, revenue_y3=1_004_999
+
+        | Revenue | $1.00MM | N/A | $1.00MM |
+        **Revenue Trend:** Increasing — revenue has been increasing over the
+        historical period.
+
+    Both cells are honest roundings of their inputs and the trend is honestly
+    computed on the raw values; a $4,999 change is smaller than the rendered
+    unit's granularity, so it is invisible in the table and visible to the
+    trend. This is inherent to rounding at any precision, not a defect of this
+    crossover: pick any unit and there is a change too small for it to show
+    while a comparison of raw values still has a sign. R24 chose where the
+    invisible band sits — the `$MM` form is accurate to 0.5% or better — it did
+    not abolish it, and abolishing it is not available. Widening the property
+    to all magnitudes would gate a behaviour the package cannot have. Disclosed
+    in CHANGELOG.md and README.md rather than gated.
 
     Red-proof (must fail): the unconditional `$MM` divide in
     creditmemo/money.py — with it, the y1=$1,000 / y3=$4,999 case below renders
     two identical cells under "increasing".
-    Observed: 66 failed, 361 passed; this gate is 1 of the 66.
+    Observed: 66 failed; this gate is 1 of the 66.
     """
     cases = [(1_000, 4_999, "increasing"), (4_999, 1_000, "decreasing"),
              (1_000, 1_000, "stable"), (0, 4_999, "increasing"),
@@ -2798,8 +2854,8 @@ def test_g14b_an_empty_list_element_is_absence():
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 1 failed, 426 passed for each site reverted, and 1 failed,
-    426 passed with both reverted — this gate is the only one that sees it,
+    Observed: 1 failed for each site reverted, and 1 failed
+    with both reverted — this gate is the only one that sees it,
     which is why it compares whole renderings rather than one section's.
     """
     padded = CreditMemo(_deal(conditions=[
@@ -2839,7 +2895,7 @@ def test_g14b_whitespace_is_absence_for_an_optional_string_too():
     Red-proof (must fail): restore `return bool(value)` in
     creditmemo/fields.py.
     Command: as above.
-    Observed: 2 failed, 425 passed — this gate and its list half.
+    Observed: 2 failed — this gate and its list half.
     `test_g9_the_optional_string_rule_is_stated` stays green, because it
     exercises `""` and never `"   "`: that is the hole this closes.
     """
@@ -2873,7 +2929,7 @@ def test_the_section_count_is_not_moved_by_caller_prose():
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 1 failed, 426 passed — "a '## ' line in deal_summary moved the
+    Observed: 1 failed — "a '## ' line in deal_summary moved the
     section count from 7 to 8".
     """
     from creditmemo.renderers import markdown as markdown_module
@@ -2921,7 +2977,7 @@ def test_the_memo_does_not_point_at_a_section_it_does_not_contain():
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 2 failed, 425 passed — this gate, and
+    Observed: 2 failed — this gate, and
     test_g14b_whitespace_is_absence_for_an_optional_string_too, which sees the
     same fallback from the other side.
     """
@@ -2977,7 +3033,7 @@ def test_the_only_thing_the_docx_adds_is_an_empty_paragraph(tmp_path):
     Command:
       rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
       PYTHONPYCACHEPREFIX=$HOME/pyc $HOME/probeenv/bin/python -m pytest tests/ -q
-    Observed: 1 failed, 426 passed — "31 empty paragraphs: 7 rules + 24
+    Observed: 1 failed — "31 empty paragraphs: 7 rules + 24
     spacers, for 12 Markdown tables".
     """
     pytest.importorskip("docx")

@@ -152,19 +152,71 @@ above it you get `$2.50MM`; below it you get exact dollars and cents, `$4,999`
 or `$4,999.60`, with the cents suppressed when they are zero. A supplied zero is
 `$0`. Negative figures lead with the sign: `-$4,000`, `-$100.00MM`.
 
-This means one table can mix the two — `| Revenue | $900,000 |` above
-`| EBITDA | $1.10MM |`. That is deliberate. Through 0.2.1 the units were kept
-consistent by dividing everything by a million at two decimals, which meant
-**every figure below $5,000 printed as `$0.00MM`** — the same characters a
+Below half a cent there is no honest cent figure to print, and rounding to `$0`
+would put a non-zero figure behind the string a stated zero uses — the defect
+this section exists to describe. So a sub-cent magnitude is written as a
+**bound** rather than a value: `<$0.01`, or `>-$0.01` below zero. Each is a
+true inequality about the number, and it keeps three things apart that would
+otherwise read the same:
+
+    | Net Income | $0 | <$0.01 | >-$0.01 |
+    | Origination Fee | 0.00% (<$0.01) |
+
+A stated zero, a positive sub-cent figure and a negative one are three
+different strings. Those are all the forms a single figure takes: `$0`,
+`<$0.01`, `>-$0.01`, the cents form, the `$MM` form, and `N/A` for a figure you
+did not supply. The loan amount is the only place two of them appear together —
+see below.
+
+This also means one table can mix the two units — `| Revenue | $900,000 |`
+above `| EBITDA | $1.10MM |`. That is deliberate. Through 0.2.0 the units were
+kept consistent by dividing everything by a million at two decimals, which
+meant **every figure below $5,000 printed as `$0.00MM`** — the same characters a
 stated zero prints. A $4,999 cash balance and a zero cash balance reached the
 Investment Committee as one string. The borrower snapshot was worse: one
 decimal, so `total_assets=49_000` printed `$0.0MM`. If you generated memos for
-microenterprise or small-business deals with 0.2.0 or 0.2.1, **the small figures
-in them are wrong** — regenerate them.
+microenterprise or small-business deals with 0.1.0 or 0.2.0, **the small figures
+in them are wrong** — regenerate them. 0.2.1 is the release that fixes this.
 
 The loan amount is the one figure written twice: `$2,500,000 ($2.50MM)`, or just
 `$250,000` below the crossover, where the parenthesised form would only be a
 coarser copy of the number beside it.
+
+### Two known costs of writing figures in the unit that fits them
+
+**A table can switch units inside the comparison it exists for.** Every cell
+below is true, and the switch lands between the two figures a reader is meant
+to compare:
+
+    | Total Assets        | $999,999 |
+    | Total Liabilities   | $1.00MM  |
+    | Net Assets / Equity | -$1      |
+
+    | Revenue | $999,999 | $1.00MM | $1.00MM |
+
+The second is the same thing inside one metric's own time series. **The planned
+direction for 0.3.0 is unit consistency within a table: if any figure in a
+table falls below the crossover, the whole table renders in dollars.** The
+dollars form is exact at every magnitude, so that buys consistency by rendering
+the large figures more precisely — never by collapsing a small one, which is
+what 0.2.0 did.
+
+**A change smaller than the rendered unit's granularity is invisible in the
+table and still visible to the revenue trend.** Above the crossover:
+
+    revenue_y1=1_000_000, revenue_y3=1_004_999
+
+    | Revenue | $1.00MM | N/A | $1.00MM |
+    **Revenue Trend:** Increasing — revenue has been increasing over the
+    historical period.
+
+Both cells are honest roundings of their inputs, and the trend is computed on
+the raw values you supplied, so nothing here is wrong — the table is coarser
+than the comparison. This is inherent to rounding at any precision and is not
+fixed by moving the crossover: at exact cents the same pair would be a fraction
+of a cent apart. The trend is computed on raw values on purpose; computing it on
+the rendered figures would make the memo's one analytical claim a function of
+the formatter and would report "stable" for a real change.
 
 ---
 
@@ -199,21 +251,47 @@ silence.
 
 The same principle applies to figures. Every `Optional` field is consulted with
 `is not None` — never for truthiness — so a supplied `0` is rendered as the
-number the caller stated: no cash on hand as `$0`, a 0% forgivable loan or
-QLICI B tranche as `0.00%`, and a revenue collapse from $5MM to zero as
-`Revenue Trend: Decreasing` rather than as no line at all. A field a caller
-never filled in is `None`, and only that renders as `N/A`.
+number the caller stated: no cash on hand as `$0`, a 0% `interest_rate` — a
+forgivable loan, an EQ2 note, a QLICI B tranche — as `0.00%`, and a revenue
+collapse from $5MM to zero as `Revenue Trend: Decreasing` rather than as no
+line at all. A field a caller never filled in is `None`, and only that renders
+as `N/A`.
+
+`NMTCTerms.qlici_b_rate` is *not* an example of this, and an earlier version of
+this section used it as one. It is a required `float`, not an `Optional`, and it
+reaches neither rendering at any value — see [the NMTC known
+limitation](#known-limitation-four-nmtc-inputs-do-not-reach-the-memo). The
+`0.00%` above is `LoanTerms.interest_rate`, which does render.
 
 The one exception is `Optional[str]`, where the falsy value is the empty string
-— and any string that is only whitespace, which states exactly as much. The
-reason is not that these fields all render as headings: there are 16 of them and
-that is true of six. The reason is that **an optional string is always rendered
-behind a label the package supplies** — a heading, a table row label, a bold
-prefix — and the label is emitted because the string is. A string that says
-nothing therefore produces a label with nothing after it: `| Anticipated Closing
-|  |`, or `### Mission` above a blank line, or a numbered condition that is just
-`2.`. The same rule governs the elements inside `conditions`, so an empty
-condition is dropped and the rest are renumbered.
+— and any string that is only whitespace, which states exactly as much. **An
+empty string states nothing, so there is nothing of yours for the memo to
+reproduce, and whatever it prints in its place is the package's own output
+standing in for your content.**
+
+There are 16 `Optional[str]` fields. For 15 of them what the package would
+print is a label it supplies — a heading, a table row label, a bold prefix —
+left standing with nothing after it: `| Anticipated Closing |  |`, or
+`### Mission` above a blank line, or a numbered condition that is just `2.`.
+Six render as a heading over a body (`description`, `mission`, `collateral`,
+`guarantor`, `use_of_proceeds`, `impact_narrative`), five as a table row label
+(`closing_date`, `maturity_date`, `cde_name`, `investor_name`, and
+`use_of_proceeds` again, which is a Deal Summary row as well as a heading), and
+five as an inline bold label (`ceo_name`, `website`, `census_tract`,
+`fund_name`, `ic_date` — the last two render `N/A` and `TBD`, which is what an
+absent value renders too).
+
+The sixteenth is **`deal_summary`**, and it is the exception to the label: it is
+reproduced as bare prose in the Executive Summary, with no heading, no row and
+no prefix of its own. An earlier version of this section said an optional string
+is *always* rendered behind a label, over a count of 16, and that sentence was
+false for this field. There is no label to orphan here and an empty string costs
+only a blank line; the field is inside the rule because the rule is uniform, and
+uniformity is what is guaranteed: for all 16, `""` and `"   "` produce a memo
+byte-identical to the one you get by leaving the field alone.
+
+The same rule governs the elements inside `conditions`, so an empty condition is
+dropped and the rest are renumbered.
 
 And a deal with no `risks` says so as a fact about its inputs. It does not
 claim the deal has no risks; the package has no way to know that.
@@ -292,6 +370,68 @@ transaction, add them to your memo by hand until this is fixed.** Adding rows
 changes the .docx table shape and needs the gate coverage that goes with it,
 which is why 0.2.1 discloses it rather than patching it. **This is the top item
 for 0.3.0.**
+
+---
+
+## Known Limitations in 0.2.1
+
+Four things this release does not do, disclosed here because you would
+otherwise find them in a memo. Two more are in
+[How Dollar Figures Are Written](#two-known-costs-of-writing-figures-in-the-unit-that-fits-them)
+— one of which 0.3.0 removes and one of which is inherent to rounding and will
+not be removed — and one is in
+[NMTC Deals](#known-limitation-four-nmtc-inputs-do-not-reach-the-memo).
+
+**Ratios, rates and the credit price still round a small non-zero to zero.**
+0.2.1's rounding work covers dollar figures only. The other formatters were not
+swept, and each renders a small supplied value as the characters a stated zero
+produces:
+
+| Field | Supplied | Renders |
+|---|---|---|
+| `dscr`, `current_ratio`, `debt_to_equity`, the three projected DSCRs | `0.001` | `0.00x` |
+| `interest_rate` | `0.00001` | `0.00%` |
+| `ltv` | `0.0001` | `0.0%` |
+| `min_dscr_covenant` | `0.001` | `Minimum DSCR of 0.00x` |
+| `max_ltv` | `0.0001` | `Maximum LTV of 0.0%` |
+| `origination_fee_pct` | `0.00001` | `0.00%` |
+| `cde_fee_rate` | `0.0001` | `0.0%` |
+| `credit_price` | `0.001` | `$0.00/$1` |
+
+The DSCR is the figure an IC reads first. Fixing this means changing numbers
+across seven sites and needs the same gate coverage the money formatter got, so
+0.2.1 discloses it. The one that bites on an ordinary deal rather than an
+unusual input is `cde_fee_rate` at one decimal, which cannot tell 2.04% from
+2.0%.
+
+**Required strings are not checked, and `None` reaches the memo as the word
+`None`.** The empty-string rule above governs the 16 `Optional[str]` fields.
+`deal_name`, `prepared_by`, `prepared_date` and the required `BorrowerProfile`
+strings are not optional, so the package takes them as given. With
+`deal_name=None`, `prepared_date=None`, `prepared_by="   "` and
+`borrower.name="  "` you get, with nothing raised:
+
+    # None
+    **Prepared By:**
+    **Date:** None
+    | Borrower |    |
+
+`fund_name`, which is optional, correctly reads `N/A` three lines above. Until
+0.3.0 decides between validating these at construction and giving them a
+placeholder, supply them. Assembling a `DealProfile` field by field is the
+route that hits this.
+
+**Non-`Optional` counters still treat `0` as absent.** On `ImpactData`:
+`affordable_units`, `sq_ft_community_space`, `patients_served`,
+`students_served`, `businesses_supported`. On `LoanTerms`: `io_periods` and
+`origination_fee_pct`. None of them is `Optional`, so the row is suppressed on
+`0` and you cannot say "I checked, and it is zero" the way you can with the
+seven tri-state flags.
+
+**The Historical Financial Summary maps `revenue_y1` to the column headed
+`Year -2`** — oldest first — and nothing in the memo or the field names says so.
+The stated `Revenue Trend` depends on that mapping. Renaming the fields or the
+columns is a breaking change to the input contract, so 0.2.1 documents it.
 
 ---
 

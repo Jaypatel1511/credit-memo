@@ -6,10 +6,16 @@ section that asked them.
 
 **"Did the caller supply this?"** ``None`` means no. A supplied ``0``, ``0.0``
 or ``False`` means yes, and is often the most material figure in the file: a 0%
-forgivable loan, an EQ2 note, a 0% QLICI B tranche, a zero cash balance, a
-fully depreciated asset base. Testing those for truthiness discards them and
-prints ``N/A``, which tells an Investment Committee the figure is unknown when
-the caller stated it is zero.
+``interest_rate`` on a forgivable loan or an EQ2 note, a zero cash balance, a
+fully depreciated asset base, revenue that fell to zero. Testing those for
+truthiness discards them and prints ``N/A``, which tells an Investment
+Committee the figure is unknown when the caller stated it is zero.
+
+This list used to name "a 0% QLICI B tranche" as well. That is not an example
+of anything this module governs: ``NMTCTerms.qlici_b_rate`` is a required
+``float``, so :func:`is_supplied` is never asked about it, and it reaches
+neither rendering at any value — one of the four inputs the 0.2.1 CHANGELOG
+discloses as discarded.
 
 **"How does this field read?"** ``interest_rate`` was formatted by two separate
 f-strings in two sections, which is how the Executive Summary came to say
@@ -33,31 +39,56 @@ def is_supplied(value) -> bool:
     The one exception is ``str``, where the falsy value is ``""`` — and, F11,
     any string that is only whitespace, which states exactly as much.
 
-    **The reason, corrected.** Both this docstring and README.md used to justify
-    the rule by saying the fields that hold an optional string "each render as a
-    section heading with the string beneath it", so an empty one would put a
-    heading over an empty body. There are 16 ``Optional[str]`` fields in the
-    schema and that is true of six of them (``mission``, ``description``,
-    ``collateral``, ``guarantor``, ``use_of_proceeds``, ``impact_narrative``).
-    It is not true of ``closing_date`` and ``maturity_date`` — the two fields
-    R18 actually moved — which render as rows of the Proposed Terms table, nor
-    of ``ceo_name``, ``website``, ``census_tract``, ``fund_name`` or ``ic_date``,
-    which render as inline bold labels, nor of ``cde_name`` and
-    ``investor_name``, which are NMTC table rows. The rule is right; that was
-    not its reason.
+    **The reason, corrected — and the enumeration completed.** Both this
+    docstring and README.md once justified the rule by saying the fields that
+    hold an optional string "each render as a section heading with the string
+    beneath it", so an empty one would put a heading over an empty body. R24's
+    round replaced that with "an optional string is *always* rendered behind a
+    label the package supplies". Neither is true of all of them, and the second
+    was quantified over 16 fields while listing 15.
 
-    The reason is one shape, and every one of the 16 has it: an optional string
-    is rendered *behind a label the package supplies* — a heading, a table row
-    label, a bold prefix — and the label is emitted because the string is. A
-    string that says nothing therefore produces a label with nothing after it:
+    There are 16 ``Optional[str]`` fields in the schema. Derived from the
+    annotations and from what each one actually renders — not counted by eye:
+
+    * a heading over a body (6): ``description`` (``### Organization
+      Description``), ``mission``, ``collateral``, ``guarantor``,
+      ``use_of_proceeds`` and ``impact_narrative``
+    * a table row label (5, one of them a repeat): ``closing_date``
+      (``| Anticipated Closing |``) and ``maturity_date``, the two fields R18
+      moved; ``cde_name`` (``| CDE |``) and ``investor_name`` in the NMTC
+      table; and ``use_of_proceeds`` again, which is *also* a Deal Summary row
+    * an inline bold label (5): ``ceo_name``, ``website``, ``census_tract``,
+      ``fund_name`` and ``ic_date`` — the last two through
+      :func:`or_placeholder`, so ``""`` renders ``N/A``/``TBD`` exactly as
+      ``None`` does rather than rendering nothing
+    * **no label at all (1): ``deal_summary``.** It is reproduced as bare prose
+      in the Executive Summary — ``lines += [deal.deal_summary, ""]``, no
+      heading, no row, no prefix. This is the field the "always behind a label"
+      sentence omitted, and the sentence is false for it.
+
+    The reason that holds for all 16 is one step further back: an empty or
+    whitespace-only string states nothing, so there is nothing of the caller's
+    for the memo to reproduce, and whatever appears in its place is the
+    package's own output presented as the caller's. For 15 of the 16 that is a
+    label left standing with nothing after it —
 
         | Anticipated Closing |  |        <- R18, the Proposed Terms table
         ### Mission                       <- R4, a heading over an empty body
         - 2.                              <- F11, a numbered condition
 
-    Whitespace produces the same shapes as ``""`` and is folded in with it, so
-    ``"   "`` no longer renders ``### Mission`` above a blank line. Gated by
-    ``test_g9_the_optional_string_rule_is_stated``.
+    — which is the harm the rule was written for. For ``deal_summary`` there is
+    no label to orphan and the cost of an empty string is only a blank line; it
+    is inside the rule because the rule is uniform, and uniformity is the
+    property gated: ``""`` and ``"   "`` must render byte-identically to
+    ``None`` for every one of the 16, whatever shape that field takes.
+
+    Gated by ``test_g9_the_optional_string_rule_is_stated`` (the predicate and
+    the ``### Mission`` case), by
+    ``test_g9_an_empty_optional_string_renders_as_absence`` for ``""`` and by
+    ``test_g14b_whitespace_is_absence_for_an_optional_string_too`` for
+    ``"   "``. The last two discover the 16 fields from the annotations rather
+    than listing them, so a seventeenth is covered the moment it is declared —
+    which is why the enumeration above is documentation and not the gate.
     """
     if value is None:
         return False

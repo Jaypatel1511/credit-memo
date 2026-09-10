@@ -5,7 +5,7 @@ The Markdown renderer emits emphasis with ``*``; the .docx renderer has to
 remove it before writing a Word run, and so does the table-cell splitter in
 :mod:`creditmemo.tables`. Both sides need the same rule for what is an emphasis
 marker and what is content, so the rule lives here rather than being written
-twice and drifting — which is exactly what happened. Through 0.2.1
+twice and drifting — which is exactly what happened. Through 0.2.0
 ``renderers/docx.py`` stripped every ``*`` unconditionally while ``tables.py``
 stripped only ``**``, so the same character survived in a Word table cell and
 was deleted from a paragraph of the same document::
