@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "credit-memo"
-version = "0.2.1"
+version = "0.2.2"
 description = "Generate IC credit memos from structured deal inputs — CDFI loans, NMTC deals, and impact investments"
 readme = "README.md"
 requires-python = ">=3.9"

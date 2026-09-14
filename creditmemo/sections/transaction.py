@@ -4,6 +4,53 @@ from creditmemo.data.schema import DealProfile, DEAL_TYPES
 from creditmemo.money import dollars, money, money_with_mm
 from creditmemo.tables import escape_cell
 
+#: (field, the words the footnote uses) for every ``NMTCTerms`` input that
+#: reaches neither rendering at any value, in field order.
+#:
+#: **Derived by perturbation, not by reading the code**: each of the nine
+#: ``NMTCTerms`` fields was changed one at a time on the published 0.2.1 wheel
+#: and both renderings were diffed against the unperturbed memo. Five moved the
+#: memo (``nmtc_allocation``, ``credit_price``, ``cde_fee_rate``, ``cde_name``,
+#: ``investor_name``); these four moved neither. Three of them —
+#: ``leverage_loan_rate``, ``qlici_a_rate`` and ``qlici_b_rate`` — are
+#: *required positional arguments*: a caller cannot construct ``NMTCTerms``
+#: without supplying them, and the package then discards them in silence.
+#:
+#: The README has disclosed this since 0.2.1. The memo did not, and the memo is
+#: what reaches an Investment Committee: the section is headed **NMTC
+#: Structure** and nothing in it marked the table partial. Adding rows would
+#: change the ``.docx`` table shape and needs the gate coverage that goes with
+#: it, which is why it is still 0.3.0 work; a line of prose beneath the table
+#: changes no shape.
+#:
+#: ``test_g15_the_footnote_names_exactly_the_discarded_inputs`` re-derives this
+#: set by the same perturbation at test time, so a fifth discarded field, or
+#: one of these four starting to render, reddens rather than going unnoticed.
+UNRENDERED_NMTC_INPUTS = (
+    ("leverage_loan_rate", "the leverage loan rate"),
+    ("qlici_a_rate",       "the QLICI A rate"),
+    ("qlici_b_rate",       "the QLICI B rate"),
+    ("compliance_years",   "the compliance period"),
+)
+
+
+def _and_list(phrases) -> str:
+    """``a``, ``a and b``, ``a, b and c`` — an English list, no Oxford comma."""
+    phrases = list(phrases)
+    if len(phrases) == 1:
+        return phrases[0]
+    return ", ".join(phrases[:-1]) + " and " + phrases[-1]
+
+
+#: The footnote itself, built from :data:`UNRENDERED_NMTC_INPUTS` rather than
+#: written out, so the two cannot disagree.
+UNRENDERED_NMTC_INPUTS_NOTE = (
+    "This table does not show every NMTC input the package accepts: "
+    + _and_list(label for _, label in UNRENDERED_NMTC_INPUTS)
+    + " are accepted by NMTCTerms and appear nowhere in this memo, in either "
+      "format. Add them by hand if the Committee needs them."
+)
+
 
 def generate(deal: DealProfile) -> str:
     lt = deal.loan_terms
@@ -111,6 +158,10 @@ def generate(deal: DealProfile) -> str:
             lines.append(f"| CDE | {escape_cell(nt.cde_name)} |")
         if fields.is_supplied(nt.investor_name):
             lines.append(f"| Tax Credit Investor | {escape_cell(nt.investor_name)} |")
+        # Beneath the table, not in it: a row would change the .docx table
+        # shape, which is the thing 0.2.1 deferred. A paragraph does not.
+        lines.append("")
+        lines.append(UNRENDERED_NMTC_INPUTS_NOTE)
         lines.append("")
 
     return "\n".join(lines)

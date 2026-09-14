@@ -1,6 +1,189 @@
 """Financial Analysis section generator."""
+import math
+from typing import Optional
+
 from creditmemo.data.schema import DealProfile, _reject_fractional_ltv
 from creditmemo.money import money
+
+#: How the Historical Financial Summary heads its three revenue columns, in
+#: document order.
+#:
+#: **Read off the rendered table, not off the field names.** ``revenue_y1`` is
+#: the *earliest* column and ``revenue_y3`` the latest — an ordering the
+#: package's own records flagged as undocumented, and one a reader cannot
+#: recover from a field called ``y1``. The sentence below names these column
+#: headings rather than the attributes, so a reader checks the claim against
+#: the row immediately above it. If the table's headings ever change, they
+#: change here and in one place; gated by
+#: ``test_g10b_the_sentence_names_the_columns_the_table_uses``.
+REVENUE_FIRST_COLUMN = "Year -2"
+REVENUE_MIDDLE_COLUMN = "Year -1"
+REVENUE_LAST_COLUMN = "Most Recent"
+
+#: The label for each outcome of the endpoint comparison, and the verb that
+#: states it.
+#:
+#: Deliberately **not** ``Increasing`` / ``Decreasing`` / ``Stable``. Those
+#: words describe a series, and nothing here computes anything about a series:
+#: it compares two numbers and never reads ``revenue_y2``. Measured on the
+#: published 0.2.1 wheel, ``revenue_y2`` at ``0``, ``1``, ``$50MM`` and
+#: ``-$10MM`` all produced a byte-identical sentence, and
+#:
+#:     | Revenue | $1.00MM | $9.00MM | $1.10MM |
+#:     **Revenue Trend:** Increasing — revenue has been increasing over the
+#:     historical period.
+#:
+#: reported an 88% collapse in the most recent year as an increase, while
+#:
+#:     | Revenue | $3.00MM | $500,000 | $3.00MM |
+#:     **Revenue Trend:** Stable — revenue has been stable over the historical
+#:     period.
+#:
+#: told an Investment Committee that revenue down 83% and recovered had been
+#: stable. ``Stable`` was the worst of the three, because equality of two
+#: endpoints is not a volatility finding and the word claims one; the equality
+#: label here says only that the two figures match.
+#:
+#: A real classifier — all supplied points plus a volatility term — is 0.3.0
+#: work with its own methodology question. This release makes the sentence say
+#: what the code computes, and nothing more.
+ENDPOINT_HIGHER = ("Higher", "is higher than")
+ENDPOINT_LOWER = ("Lower", "is lower than")
+ENDPOINT_UNCHANGED = ("Unchanged", "equals")
+
+#: The clause that closes every endpoint sentence. The middle column is named,
+#: so a reader who can see a dip or a spike in it knows the sentence did not
+#: look at it rather than concluding the sentence is wrong about it.
+ENDPOINT_SCOPE_CLAUSE = (
+    "This compares those two columns only; {middle} is not read."
+)
+
+
+def _is_finite(value) -> bool:
+    """
+    True if ``value`` is a real number this package can compare and quote.
+
+    ``nan``, ``inf`` and ``-inf`` are not. A predicate that cannot judge the
+    type at all also answers False: it has not established that the value is a
+    number, and the caller's only use for the answer is deciding whether to
+    state a sentence about it.
+
+    **Which types were checked, and how.** Measured with
+    ``math.isfinite`` on CPython 3.10.12: ``int`` (including ``10**30``),
+    ``float``, ``bool`` and ``decimal.Decimal`` all answer, for finite and for
+    non-finite values alike — ``Decimal("NaN")`` and ``Decimal("Infinity")``
+    answer ``False``. So does ``numpy.float64`` and ``numpy.int64``, which is
+    what pandas hands over: ``pd.DataFrame({"rev": [1e6, None]})["rev"][1]`` is
+    ``numpy.float64(nan)``, **not** ``None``, and ``math.isfinite`` returns
+    ``False`` for it. That is the route this guard exists for — a blank cell in
+    a spreadsheet of borrower financials.
+
+    ``pandas.NA`` and ``pandas.NaT`` are the two that ``math.isfinite``
+    *raises* on (``TypeError: must be real number``), which is why the call is
+    wrapped. Both already raise earlier than this function in a full render —
+    measured on the 0.2.2 wheel, ``money(pd.NA)`` raises ``boolean value of NA
+    is ambiguous`` and ``money(pd.NaT)`` raises ``bad operand type for abs()``,
+    and the Revenue table row is built before this sentence — so nothing about
+    their end-to-end behaviour changes here. The wrapping is for a caller who
+    reaches :func:`revenue_endpoint_line` directly: it gets silence rather than
+    a traceback, and silence is what an unjudgeable endpoint means.
+
+    This is not input validation and it does not raise. See R20: validating
+    would be a schema change.
+    """
+    try:
+        return math.isfinite(value)
+    except (TypeError, ValueError):
+        return False
+
+
+def revenue_endpoint_line(f) -> Optional[str]:
+    """
+    The one sentence the memo states about revenue, or ``None``.
+
+    **When it is stated.** Only when both ``revenue_y1`` and ``revenue_y3`` are
+    supplied — the same condition 0.2.1 rendered under, unchanged. Measured on
+    the published 0.2.1 wheel: ``revenue_y2`` alone, ``revenue_y2`` + ``y3``,
+    and ``revenue_y1`` + ``y2`` each produced **no sentence at all**, and they
+    still do. Widening the comparison to whichever two of the three are
+    outermost would put a sentence in memos that have never carried one, which
+    is a rendering change this release did not take; silence asserts nothing,
+    so nothing about it can mislead.
+
+    **What it claims.** That the *supplied* Most Recent figure is higher than,
+    lower than, or equal to the *supplied* Year -2 figure. Both figures are
+    quoted through :func:`creditmemo.money.money`, so the two dollar strings in
+    the sentence are byte-identical to the two cells in the row above it and a
+    reader can check the claim without leaving the page.
+
+    **The one case where quoting the cells would make the sentence false.**
+    Above the ``$MM`` crossover a real difference can be smaller than the
+    rendered unit shows: ``revenue_y1=1_000_000, revenue_y3=1_004_999`` renders
+    ``| Revenue | $1.00MM | N/A | $1.00MM |``, two identical cells, under a
+    comparison whose sign is real. Naming them as different figures there would
+    hand the reader a sentence they can disprove from the row above. That case
+    gets its own wording, which states the direction, states that the row
+    cannot show it, and quotes the single string both endpoints render as.
+    Gated by ``test_g10b_a_sub_precision_difference_is_not_claimed_as_two``.
+
+    **A non-finite endpoint states nothing (R25).** ``nan``, ``inf`` and
+    ``-inf`` produce no sentence, the same way a missing endpoint already
+    produces none. ``nan != nan`` is ``True``, so 0.2.2 routed a ``nan``
+    endpoint into the ``Unchanged`` fall-through, whose verb is *equals*, and
+    the sub-precision branch above then wrote::
+
+        | Revenue | $nan | N/A | $3.00MM |
+        **Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue of
+        $3.00MM equals Year -2 revenue of $nan. ...
+
+    which states that $3.00MM equals $nan. 0.2.1 rendered the same input as
+    *"Stable — revenue has been stable over the historical period"*, so this is
+    not a regression; it is a false sentence in the one place this release
+    exists to make unfalsifiable, and "not a regression" is not a reason to
+    keep it. It is also reachable without anyone constructing a ``nan`` on
+    purpose: a blank cell read through pandas is ``numpy.float64(nan)``, which
+    is the route R20's comment below already describes.
+
+    Silence asserts nothing, so nothing about it can mislead — the same
+    reasoning the missing-endpoint case is decided on. The Revenue *table row*
+    still prints ``$nan``, because that is
+    :func:`creditmemo.money.money`'s rendering of a non-finite magnitude and
+    changing it is the formatter question 0.3.0 holds; a cell reading ``$nan``
+    is visibly not a dollar figure, whereas the sentence was a claim.
+    Gated by ``test_g20_a_non_finite_endpoint_states_nothing``.
+    """
+    first, last = f.revenue_y1, f.revenue_y3
+    if first is None or last is None:
+        return None
+    if not (_is_finite(first) and _is_finite(last)):
+        return None
+
+    if last > first:
+        label, relation = ENDPOINT_HIGHER
+    elif last < first:
+        label, relation = ENDPOINT_LOWER
+    else:
+        label, relation = ENDPOINT_UNCHANGED
+
+    first_text, last_text = money(first), money(last)
+    scope = ENDPOINT_SCOPE_CLAUSE.format(middle=REVENUE_MIDDLE_COLUMN)
+
+    if first != last and first_text == last_text:
+        body = (
+            f"{REVENUE_LAST_COLUMN} revenue {relation} {REVENUE_FIRST_COLUMN} "
+            f"revenue by less than the row above can show; both are written "
+            f"{last_text}."
+        )
+    else:
+        body = (
+            f"{REVENUE_LAST_COLUMN} revenue of {last_text} {relation} "
+            f"{REVENUE_FIRST_COLUMN} revenue of {first_text}."
+        )
+
+    return (
+        f"**Revenue, {REVENUE_FIRST_COLUMN} vs {REVENUE_LAST_COLUMN}:** "
+        f"{label} — {body} {scope}"
+    )
 
 
 def _fmt_ratio(val, suffix="x", decimals=2) -> str:
@@ -58,11 +241,12 @@ def generate(deal: DealProfile) -> str:
         "",
     ]
 
-    if f.revenue_trend is not None:
-        lines.append(
-            f"**Revenue Trend:** {f.revenue_trend.title()} — "
-            f"revenue has been {f.revenue_trend} over the historical period."
-        )
+    # Not `f.revenue_trend`. That property's words describe a series and it
+    # computes a two-point comparison; 0.2.2 keeps the property for callers and
+    # stops rendering its vocabulary. See `revenue_endpoint_line` above.
+    endpoint_line = revenue_endpoint_line(f)
+    if endpoint_line is not None:
+        lines.append(endpoint_line)
         lines.append("")
 
     has_balance = any(v is not None for v in

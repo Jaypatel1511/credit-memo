@@ -1,6 +1,8 @@
 """Executive Summary section generator."""
 from creditmemo import fields
-from creditmemo.data.schema import DealProfile, DEAL_TYPES, SECTORS
+from creditmemo.data.schema import (
+    CONDITIONS_LEAD_IN, DealProfile, DEAL_TYPES, SECTORS,
+)
 from creditmemo.money import money_with_mm
 from creditmemo.tables import escape_cell
 
@@ -30,9 +32,13 @@ def generate(deal: DealProfile) -> str:
         "",
     ]
 
+    # The lead-in is keyed by recommendation. Through 0.2.1 one string —
+    # "**Subject to the following conditions:**" — was printed under every
+    # recommendation, so a memo could read **DECLINE** and announce the
+    # conditions of an approval four lines later. See schema.CONDITIONS_LEAD_IN.
     conditions = fields.supplied_items(deal.conditions)
     if conditions:
-        lines.append("**Subject to the following conditions:**")
+        lines.append(CONDITIONS_LEAD_IN[deal.recommendation])
         for cond in conditions:
             lines.append(f"- {cond}")
         lines.append("")
