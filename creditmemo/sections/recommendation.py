@@ -1,6 +1,9 @@
 """IC Recommendation section generator."""
 from creditmemo import fields
-from creditmemo.data.schema import DealProfile, RECOMMENDATIONS
+from creditmemo.data.schema import (
+    CONDITIONAL_APPROVAL, CONDITIONS_HEADING,
+    CONDITIONS_NOT_AN_APPROVAL_TEXT, DealProfile, RECOMMENDATIONS,
+)
 
 
 def generate(deal: DealProfile) -> str:
@@ -16,7 +19,24 @@ def generate(deal: DealProfile) -> str:
     # as the conditions of approval. F11; see creditmemo.fields.
     conditions = fields.supplied_items(deal.conditions)
     if conditions:
-        lines += ["### Conditions of Approval", ""]
+        # The heading is keyed by recommendation. Through 0.2.1 it was the
+        # literal "### Conditions of Approval" under every one of the four,
+        # including `decline` — a heading naming the terms of an approval, over
+        # a numbered list, in a memo that refuses the deal.
+        #
+        # RELABELLED RATHER THAN REFUSED. Raising at construction when
+        # `conditions` is supplied under a non-conditional recommendation was
+        # the other candidate. It is a behaviour change for an existing caller
+        # — code that builds a declined memo with conditions works today and
+        # would stop working on upgrade — and this release's constraint is that
+        # nothing an existing caller does breaks. It is also the wrong refusal:
+        # recording the stipulations that went with a decline is a legitimate
+        # thing for an underwriter to do, and the package has no standing to
+        # forbid it. Dropping the conditions silently was never a candidate: a
+        # caller who supplied them must not find them missing.
+        lines += [f"### {CONDITIONS_HEADING[deal.recommendation]}", ""]
+        if deal.recommendation != CONDITIONAL_APPROVAL:
+            lines += [CONDITIONS_NOT_AN_APPROVAL_TEXT, ""]
         for i, cond in enumerate(conditions, 1):
             lines.append(f"{i}. {cond}")
         lines.append("")

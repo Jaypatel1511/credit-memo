@@ -3,6 +3,250 @@
 All notable changes to credit-memo are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — UNRELEASED (date set at tag time)
+
+**The date above is a placeholder and is deliberately not today's.** Two recent
+releases in this portfolio shipped with a CHANGELOG date one to two days
+earlier than the tag, because the entry was dated when it was written. The
+convention now is to date the entry at tag time, from the tag.
+
+Everything measured in this entry was measured on CPython 3.10.12 with
+python-docx 1.2.0, against the code on this branch, and the "before" figures
+were measured against the **published 0.2.1 wheel installed from PyPI** — not
+against this repository at the 0.2.1 tag, and not from the 0.2.1 CHANGELOG.
+The suite goes from **427 tests to 500**, both measured: 427 at `c21e109`
+(the 0.2.1 merge), 500 on this commit, all passing with
+`CREDITMEMO_REQUIRE_DOCX=1`. Every gate added below was watched to fail against
+a named mutation before being trusted; each mutation and the number of tests it
+reddened is recorded in the gate's own docstring, and the failure count is the
+evidence — a passed count is a running total of the rest of the file and goes
+stale on the next commit.
+
+This release changes **no schema, no constructor signature, no table shape and
+no required field**. Nothing an existing caller does stops working. Four of the
+five fixes change what a memo *says*; one changes only the Word file's
+properties.
+
+### Fixed
+
+**The Revenue Trend sentence asserted what it had not computed.**
+
+Reproduced from the published 0.2.1 wheel:
+
+    | Revenue | $1.00MM | $9.00MM | $1.10MM |
+    **Revenue Trend:** Increasing — revenue has been increasing over the
+    historical period.
+
+    | Revenue | $3.00MM | $500,000 | $3.00MM |
+    **Revenue Trend:** Stable — revenue has been stable over the historical
+    period.
+
+The first series fell 88% in the most recent year and was reported as
+increasing. The second fell 83% and recovered, and the memo told an Investment
+Committee it was **stable**.
+
+The sentence read `revenue_y1` and `revenue_y3` and discarded `revenue_y2`
+entirely — measured by perturbation on the published wheel: `revenue_y2` at
+`0`, `1`, `$50MM`, `-$10MM` and `None` all produced a **byte-identical**
+sentence. `Stable` fired on exact equality of the two endpoints, a ±$1 band.
+
+0.2.2 does not add a trend classifier. A real one reads all supplied points and
+needs a volatility term, and that is a methodology question this release is not
+where to answer. What it does is make the sentence say what the code computes:
+
+    **Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of
+    $1.10MM is higher than Year -2 revenue of $1.00MM. This compares those two
+    columns only; Year -1 is not read.
+
+    **Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue of
+    $3.00MM equals Year -2 revenue of $3.00MM. This compares those two columns
+    only; Year -1 is not read.
+
+Three judgements, stated:
+
+- **The label is `Higher` / `Lower` / `Unchanged`.** `Increasing` and
+  `Decreasing` describe a series and nothing here computes one. `Stable` was
+  the worst of the three, because equality of two endpoints is not a
+  volatility finding and the word claims one; `Unchanged` says only that the
+  two figures match.
+- **Which years are the endpoints when only some are supplied.** Determined
+  empirically on the published wheel: `revenue_y2` alone, `y2`+`y3`, and
+  `y1`+`y2` each produced **no sentence at all**. That is unchanged — the
+  sentence is stated only when both `revenue_y1` and `revenue_y3` are
+  supplied. Widening the comparison to whichever two are outermost would put a
+  sentence into memos that have never carried one; silence asserts nothing, so
+  nothing about it can mislead.
+- **Whether `revenue_y1` is the earliest or the latest year.** Determined from
+  the *rendered table*, not from the field name: the header row reads
+  `| Metric | Year -2 | Year -1 | Most Recent |` and `revenue_y1` fills the
+  `Year -2` cell, so `y1` is the earliest. The sentence names the column
+  headings a reader can see rather than the field names, and a gate reads that
+  header row out of the rendered memo and holds the two together.
+
+One further case: above the `$MM` crossover a real difference can be smaller
+than the rendered unit shows, so quoting both cells would hand the reader a
+sentence they could disprove from the row above. That case says so instead:
+
+    | Revenue | $1.00MM | N/A | $1.00MM |
+    **Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue is higher
+    than Year -2 revenue by less than the row above can show; both are written
+    $1.00MM. This compares those two columns only; Year -1 is not read.
+
+`FinancialData.revenue_trend` still returns `"increasing"` / `"decreasing"` /
+`"stable"`. Changing those words would break a caller comparing against them;
+the memo simply stopped rendering them, and a gate holds the property and the
+rendered label to the same comparison so the two cannot drift.
+
+**The memo did not disclose the four NMTC inputs it discards.**
+
+`leverage_loan_rate`, `qlici_a_rate`, `qlici_b_rate` and `compliance_years`
+reach neither rendering at any value; three of them are *required positional
+arguments*. Re-measured on the published 0.2.1 wheel by perturbing each of the
+nine `NMTCTerms` fields one at a time and diffing both renderings — five moved
+the memo, these four moved neither, and no fifth field was found.
+
+The README has disclosed this since 0.2.1. The memo did not, and the memo is
+what reaches an Investment Committee: the section is headed **NMTC Structure**
+and nothing marked the table partial. A line now sits beneath the table:
+
+    This table does not show every NMTC input the package accepts: the leverage
+    loan rate, the QLICI A rate, the QLICI B rate and the compliance period are
+    accepted by NMTCTerms and appear nowhere in this memo, in either format.
+    Add them by hand if the Committee needs them.
+
+**The rows are still not added.** That changes the `.docx` table shape and
+needs the gate coverage that goes with it, which is why 0.2.1 deferred it and
+why it is still the top item for 0.3.0. A paragraph beneath the table changes
+no shape: the NMTC table is still 9 rows of 2 cells.
+
+**No rendered memo carried a version stamp.**
+
+Measured on the published 0.2.1 wheel: none of `0.2.1`, `credit-memo`,
+`creditmemo`, `Generated` or `version` appeared in the Markdown or in the
+`.docx`. The README tells users, twice and in bold, *"If you generated Word
+memos with either release, regenerate them"* and *"the small figures in them
+are wrong — regenerate them"* — and that instruction could not be carried out
+against the artifacts the package produces, because nothing in an artifact said
+which release wrote it.
+
+Both renderings now end with `Generated by credit-memo 0.2.2`, read from the
+installed package's `__version__` at render time. It is not a literal: a
+literal is how the next release ships a memo that lies about itself, and the
+gate replaces `__version__` with a sentinel and requires the footer to follow
+it, which a literal cannot do.
+
+**The conditions block rendered under every recommendation.**
+
+Reproduced from the published wheel, the same two conditions each time:
+
+    recommendation='decline'   **DECLINE**
+                               **Subject to the following conditions:**
+                               ### Conditions of Approval
+
+    recommendation='approve'   **APPROVE AS PRESENTED**
+                               **Subject to the following conditions:**
+                               ### Conditions of Approval
+
+`RECOMMENDATIONS['approve']` is literally *"Approve as presented"*. A heading
+reading **Conditions of Approval** appeared under a declined deal, and both
+survived into the `.docx`. The package already distinguishes `approve` from
+`approve_conditions`, so it had the information and did nothing with it.
+
+Both labels are now keyed by recommendation. Under `approve_conditions` they
+are unchanged. Under `approve`, `table` and `decline` the lead-in reads
+**Conditions recorded with this recommendation:**, the heading reads
+**Conditions Recorded**, and a sentence under it says *"These conditions were
+supplied with the deal; the recommendation above is not an approval subject to
+them."*
+
+**Relabelled rather than raised, and the reasoning.** Raising at construction
+when `conditions` is supplied under a non-conditional recommendation was the
+other candidate. It is a behaviour change for an existing caller — code that
+builds a declined memo with conditions works today and would stop working on
+upgrade — and this release's constraint is that nothing an existing caller does
+breaks. It is also the wrong refusal: recording the stipulations that went with
+a decline is a legitimate thing for an underwriter to do, and the package has
+no standing to forbid it. Dropping the conditions silently was never a
+candidate; a gate asserts every supplied condition appears twice in both
+renderings under all four recommendations.
+
+**Every `.docx` reported Created 2013-12-23, Author python-docx.**
+
+`save_docx()` never touched core properties, so every memo this package has
+ever written carried python-docx's template defaults. Measured on the published
+0.2.1 wheel: `author='python-docx'`, `created=modified=2013-12-23T23:15Z`,
+`title=''`.
+
+A credit memo goes into a loan file, and loan files get examined — by CDFI Fund
+compliance, by auditors, by the NMTC investor's counsel. Every document
+management system sorts and filters these by a false date. It is also a
+fidelity defect under this package's own invariant: the metadata asserted a
+creation date that the `prepared_date` on page one contradicted.
+
+`author` now comes from `prepared_by`, `title` from `deal_name`, and
+`created`/`modified` from `prepared_date`. `prepared_date` is a free-form `str`
+and stays one: it is read when written unambiguously (`2026-05-06`,
+`2026/05/06`, `May 6, 2026`, `6 May 2026`, and those with a time), and
+otherwise the two date properties are left **unset**.
+
+Two things that took measuring:
+
+- "Unset" had to mean *absent*, not *untouched*. Not calling the setter leaves
+  the template's 2013 date in the file, which is the defect. python-docx cannot
+  clear a core datetime — `cp.created = None` raises `ValueError: property
+  requires <type 'datetime.datetime'> object`, measured on python-docx 1.2.0 —
+  so the `dcterms` element is removed, and the gate asserts the string `2013`
+  appears nowhere in `docProps/core.xml`.
+- `05/06/2026` is in the *unreadable* set on purpose. Reading it means choosing
+  between 5 June and 6 May, and choosing is the silent interpretation this
+  package refuses elsewhere. Nothing is guessed and nothing raises.
+
+No timezone is invented. A naive date is written at midnight and python-docx's
+core-property encoding appends a `Z`; `modified` is set equal to `created`,
+because the package writes the document once and never edits it, and reaching
+for the wall clock would make two renders of one deal differ.
+
+### Documented, not fixed
+
+**The impact-counter asymmetry.** `ImpactData.jobs_created` and `jobs_retained`
+are `int = 0` and are **not** suppressed on zero, while the other five counters
+are:
+
+    ImpactData()                      -> Jobs Created 0 | Jobs Retained 0 | Total Jobs 0
+    the other five counters set to 0  -> those five rows ABSENT
+
+Neither jobs field is `Optional`, so absence is structurally indistinguishable
+from a stated zero: a community development memo asserts zero jobs created on
+inputs that said nothing about jobs. The derived `Cost per Job` moves with it —
+on a $2.5MM loan, `jobs_created=10, jobs_retained=30` renders `$62,500` and
+`jobs_created=10` alone renders `$250,000`, **4x**, from one field nobody
+touched; with both left alone the row is omitted entirely. Neither field
+appeared in the README's counter list.
+
+**Not fixed here.** `Optional[int]` is a breaking change to the input contract,
+and suppressing a stated `0` the way the other five do trades one fabrication
+for another — it would delete a real "we checked, and this deal creates no
+jobs", which for a refinancing is true and material. **0.3.0, and it will be
+breaking.** The README now documents the behaviour and the `Cost per Job`
+consequence, and a gate holds the current behaviour so the disclosure cannot go
+stale: applying the five counters' truthiness rule to the jobs rows reddens
+that gate and **nothing else in the suite**.
+
+### Considered and left out of scope
+
+- **A real revenue trend classifier** over all supplied points with a
+  volatility term. 0.3.0, with a methodology question of its own.
+- **Adding the four NMTC rows to the table.** Changes the `.docx` table shape.
+  0.3.0, and still the top item there.
+- **Unifying `FinancialData.ltv` and `LoanTerms.max_ltv`** onto one scale, and
+  the ratio/rate formatter sweep. Both already disclosed for 0.3.0; untouched.
+- **`cp.comments`**, which python-docx's template sets to `generated by
+  python-docx` and which this release leaves alone. It is a true statement,
+  unlike the author and the date, and Item 5's scope was the four properties
+  that are not.
+- **Validating `deal_name` / `prepared_by` / `prepared_date`**, still disclosed
+  as a 0.2.x limitation. Typing `prepared_date` is a schema change.
+
 ## [0.2.1] — 2026-09-08
 
 Everything in this entry was measured on the code in this repository with the

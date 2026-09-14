@@ -23,6 +23,53 @@ RECOMMENDATIONS = {
     "decline":              "Decline",
 }
 
+#: The one recommendation whose own text says the approval is conditional.
+#: Everything else in :data:`RECOMMENDATIONS` either approves unconditionally,
+#: defers, or refuses, and a conditions block under any of those must not be
+#: labelled as the terms of an approval.
+CONDITIONAL_APPROVAL = "approve_conditions"
+
+#: The bold lead-in the Executive Summary prints above a caller's
+#: ``conditions``, keyed by recommendation.
+#:
+#: Through 0.2.1 there was one string — ``**Subject to the following
+#: conditions:**`` — and it was printed under every recommendation, including
+#: ``decline``. ``RECOMMENDATIONS["approve"]`` is literally "Approve as
+#: presented", so the memo could say ``**APPROVE AS PRESENTED**`` and
+#: ``**Subject to the following conditions:**`` three lines apart; under
+#: ``decline`` the memo announced conditions of an approval that was refused.
+#: The package already distinguishes ``approve`` from ``approve_conditions``,
+#: so it always had the information and did nothing with it.
+#:
+#: Dropping the conditions under a non-conditional recommendation was rejected:
+#: a caller who supplied them must not find them missing from the memo. See
+#: :mod:`creditmemo.sections.recommendation`.
+CONDITIONS_LEAD_IN = {
+    "approve":            "**Conditions recorded with this recommendation:**",
+    "approve_conditions": "**Subject to the following conditions:**",
+    "table":              "**Conditions recorded with this recommendation:**",
+    "decline":            "**Conditions recorded with this recommendation:**",
+}
+
+#: The ``### `` heading the IC Recommendation section prints above the same
+#: list, keyed by recommendation. Same defect, same reasoning: a heading
+#: reading **Conditions of Approval** appeared under a declined deal.
+CONDITIONS_HEADING = {
+    "approve":            "Conditions Recorded",
+    "approve_conditions": "Conditions of Approval",
+    "table":              "Conditions Recorded",
+    "decline":            "Conditions Recorded",
+}
+
+#: Printed under the heading whenever the recommendation is not
+#: :data:`CONDITIONAL_APPROVAL`. The heading alone says what the block is not;
+#: this says it in a sentence, because a numbered list under a declined deal is
+#: read as terms before it is read as a heading.
+CONDITIONS_NOT_AN_APPROVAL_TEXT = (
+    "These conditions were supplied with the deal; the recommendation above is "
+    "not an approval subject to them."
+)
+
 # ── Borrower Types ────────────────────────────────────────────────────────────
 BORROWER_TYPES = {
     "nonprofit":    "Nonprofit organization",
@@ -261,8 +308,30 @@ class FinancialData:
     @property
     def revenue_trend(self) -> Optional[str]:
         """
-        The direction of revenue over the historical period, or ``None`` if
-        either endpoint was not supplied.
+        A two-point comparison of ``revenue_y1`` against ``revenue_y3``, or
+        ``None`` if either was not supplied.
+
+        **This is not a trend, and the name is kept only for compatibility.**
+        It reads exactly two of the three revenue fields and discards
+        ``revenue_y2`` — measured on the published 0.2.1 wheel by perturbation:
+        ``revenue_y2`` at ``0``, ``1``, ``50_000_000``, ``-10_000_000`` and
+        ``None`` all produced a byte-identical memo sentence. ``"stable"``
+        therefore fires on exact equality of the two endpoints and says nothing
+        about volatility: ``(3_000_000, 500_000, 3_000_000)`` — revenue down 83%
+        and recovered — returned ``"stable"``, and the memo told an Investment
+        Committee revenue "has been stable over the historical period".
+
+        **0.2.2 stopped rendering this property's vocabulary.** The memo's
+        sentence is built by
+        :func:`creditmemo.sections.financial.revenue_endpoint_line`, which names
+        the two columns it compared and states that the middle one is not read.
+        The words returned here are unchanged so that a caller reading
+        ``f.revenue_trend`` against ``"increasing"``/``"decreasing"``/``"stable"``
+        still works; changing them would be a breaking change and a real
+        classifier over all supplied points, with the volatility question that
+        goes with it, is 0.3.0 work. Gated by
+        ``test_g10b_the_rendered_label_and_the_legacy_property_agree``, which
+        holds the two to the same comparison so they cannot drift apart.
 
         ``is not None``, not truthiness. Through 0.2.0 this was gated on
         ``if self.revenue_y1 and self.revenue_y3``, so revenue collapsing

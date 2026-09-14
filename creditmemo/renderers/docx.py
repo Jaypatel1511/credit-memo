@@ -1,4 +1,5 @@
 """Render credit memo to Word .docx format."""
+import datetime
 import re
 
 from creditmemo.data.schema import DealProfile
@@ -104,6 +105,129 @@ def _add_rule(doc) -> None:
     paragraph._p.get_or_add_pPr().append(borders)
 
 
+#: The spellings of ``DealProfile.prepared_date`` this package will read as a
+#: date, tried in order.
+#:
+#: ``prepared_date`` is a free-form ``str`` and stays one — typing it is a
+#: schema change and belongs to 0.3.0. Every format here is unambiguous. The
+#: numeric day-first/month-first forms (``05/06/2026``) are deliberately
+#: **not** here: reading one requires choosing between 5 June and 6 May, and
+#: choosing is exactly the silent interpretation this package refuses
+#: elsewhere. A value nothing here matches leaves the date properties unset —
+#: it is not guessed at and it does not raise, because failing to stamp a
+#: creation date is not a reason to refuse to write a memo.
+PREPARED_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+)
+
+
+def parse_prepared_date(value) -> "datetime.datetime | None":
+    """
+    ``value`` as a datetime, or ``None`` if it is not a date this package reads.
+
+    No timezone is invented. A value that carries an offset is normalised to
+    UTC, which is a conversion and not a guess; a value that carries none stays
+    naive. python-docx serialises either as ``...Z``, so a naive
+    ``prepared_date`` is written to the file as though it were UTC — that is
+    python-docx's encoding of a core property, not a claim this package makes,
+    and it is the reason the *date* is the part worth stamping and the
+    time-of-day is left at midnight.
+    """
+    if isinstance(value, datetime.datetime):
+        parsed = value
+    elif isinstance(value, datetime.date):
+        parsed = datetime.datetime(value.year, value.month, value.day)
+    elif isinstance(value, str):
+        text = value.strip()
+        parsed = None
+        for fmt in PREPARED_DATE_FORMATS:
+            try:
+                parsed = datetime.datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    else:
+        return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(datetime.timezone.utc)
+    return parsed
+
+
+def _unset_core_datetime(properties, name: str) -> None:
+    """
+    Remove one ``dcterms`` datetime from the core properties part.
+
+    python-docx has no way to *clear* a core datetime — ``cp.created = None``
+    raises ``ValueError: property requires <type 'datetime.datetime'> object``,
+    measured on python-docx 1.2.0 — and simply not setting it is not the same
+    as leaving it unset: the default template ships a populated
+    ``dcterms:created`` of ``2013-12-23T23:15Z``, so every memo that did not
+    set it carried that date. Deleting the element leaves the property genuinely
+    absent, which is what an unparseable ``prepared_date`` means.
+    """
+    from docx.oxml.ns import qn
+
+    element = getattr(properties, "_element", None)
+    if element is None:          # pragma: no cover - python-docx internals moved
+        return
+    node = element.find(qn("dcterms:%s" % name))
+    if node is not None:
+        element.remove(node)
+
+
+def _set_core_properties(doc, deal: DealProfile) -> None:
+    """
+    Stamp the document's own metadata from the deal.
+
+    Every ``.docx`` this package has ever written reported **Author
+    python-docx** and **Created 2013-12-23**, because ``save_docx`` never
+    touched core properties and python-docx's default template populates them.
+    Measured on the published 0.2.1 wheel: ``author='python-docx'``,
+    ``created=modified=2013-12-23T23:15Z``, ``title=''``.
+
+    A credit memo goes into a loan file, and loan files get examined — by CDFI
+    Fund compliance, by auditors, by the NMTC investor's counsel. Every document
+    management system sorts and filters on that date, and it is false for every
+    memo in the folder. It is also a fidelity defect under this package's own
+    invariant: the metadata asserted a creation date that the ``prepared_date``
+    printed on page one contradicted.
+
+    ``author`` and ``title`` are set unconditionally: both sources are required
+    ``str`` fields, and an empty one writes an empty property, which is honest —
+    nobody claimed authorship — where ``python-docx`` is not. The dates are set
+    only from a ``prepared_date`` this package can read; see
+    :func:`parse_prepared_date`.
+
+    ``modified`` is set to the same value as ``created`` rather than to the
+    wall clock. The document is written once and never edited by this package,
+    so its modification time *is* its creation time, and reaching for the clock
+    would make two renders of the same deal differ in a way nothing in the deal
+    accounts for.
+    """
+    properties = doc.core_properties
+    properties.author = deal.prepared_by
+    properties.title = deal.deal_name
+
+    prepared = parse_prepared_date(deal.prepared_date)
+    if prepared is None:
+        _unset_core_datetime(properties, "created")
+        _unset_core_datetime(properties, "modified")
+        return
+    properties.created = prepared
+    properties.modified = prepared
+
+
 def _add_table(doc, block) -> None:
     """
     Append one Markdown table block to ``doc`` as a real Word table, followed by
@@ -201,6 +325,7 @@ def render(deal: DealProfile, path: str) -> None:
         )
 
     doc = Document()
+    _set_core_properties(doc, deal)
 
     md_content = render_markdown(deal)
     lines = md_content.split("\n")

@@ -528,3 +528,163 @@ def test_docx_carries_the_deal_metadata_exactly_once(any_deal, tmp_path):
             f"{rendered!r} appears {atoms.count(rendered)} times in the .docx, "
             f"{expected} times in the Markdown"
         )
+
+
+# ── G18 — the Word file's own metadata comes from the deal ───────────────────
+#
+# Measured on the published 0.2.1 wheel: every .docx this package had ever
+# written reported author='python-docx', created=modified=2013-12-23T23:15Z and
+# title='', because save_docx never touched core properties and python-docx's
+# default template populates them.
+#
+# A credit memo goes into a loan file, and loan files get examined. Every
+# document management system sorts and filters on that date and it is false for
+# every memo in the folder. It is also a fidelity defect under this package's
+# own invariant: the metadata asserted a creation date that the prepared_date
+# on page one contradicted.
+#
+# EVERY GATE BELOW READS THE PROPERTIES BACK OUT OF A SAVED FILE. None of them
+# asserts that a setter was called.
+
+#: python-docx's template defaults, written out here so the gates can name what
+#: they are refusing rather than compare against the renderer.
+TEMPLATE_AUTHOR = "python-docx"
+TEMPLATE_CREATED_YEAR = 2013
+
+
+def test_g18_the_template_defaults_are_what_they_are_claimed_to_be():
+    """
+    Guard the guard. If a future python-docx shipped a template with no author
+    and no creation date, every gate below would pass on a renderer that sets
+    nothing at all.
+    """
+    bare = docx.Document()
+    assert bare.core_properties.author == TEMPLATE_AUTHOR
+    assert bare.core_properties.created is not None
+    assert bare.core_properties.created.year == TEMPLATE_CREATED_YEAR
+    assert bare.core_properties.title == ""
+
+
+def test_g18_core_properties_come_from_the_deal(any_deal, tmp_path):
+    """
+    G18. author from `prepared_by`, title from `deal_name`, created and
+    modified from `prepared_date`. Read back out of the saved file.
+
+    Red-proof (must fail): delete the `_set_core_properties(doc, deal)` call
+    from `creditmemo.renderers.docx.render`.
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 17 failed — this gate on both deals, the no-defaults gate on
+    both, all 5 readable-date cases, all 6 unreadable-date cases, and the two
+    single-deal gates. Nothing outside G18 sees it: the memo's text is
+    unchanged, so every content, heading and conservation gate stays green.
+    """
+    document = _save(any_deal, tmp_path)
+    properties = document.core_properties
+    assert properties.author == any_deal.prepared_by
+    assert properties.title == any_deal.deal_name
+    assert properties.created is not None
+    assert (properties.created.year, properties.created.month,
+            properties.created.day) == (2026, 5, 6), any_deal.prepared_date
+    assert properties.modified == properties.created
+
+
+def test_g18_no_saved_memo_reports_the_python_docx_defaults(any_deal, tmp_path):
+    """
+    The refusal half, stated as two independent facts rather than one. Checked
+    in the file's bytes as well as through the API, because a property can be
+    set on the object and still be written from the template part.
+    """
+    path = str(tmp_path / "defaults.docx")
+    CreditMemo(any_deal).save_docx(path)
+    properties = Document(path).core_properties
+    assert properties.author != TEMPLATE_AUTHOR
+    assert properties.created.year != TEMPLATE_CREATED_YEAR
+
+    import zipfile
+    core = zipfile.ZipFile(path).read("docProps/core.xml").decode("utf-8")
+    assert f">{TEMPLATE_AUTHOR}<" not in core, core
+    assert str(TEMPLATE_CREATED_YEAR) not in core, core
+
+
+@pytest.mark.parametrize("prepared_date,expected", [
+    ("2026-05-06",   (2026, 5, 6)),
+    ("2026/05/06",   (2026, 5, 6)),
+    ("May 6, 2026",  (2026, 5, 6)),
+    ("6 May 2026",   (2026, 5, 6)),
+    ("2026-05-06T14:30:00", (2026, 5, 6)),
+])
+def test_g18_a_readable_prepared_date_becomes_the_creation_date(
+    sample_deal, prepared_date, expected, tmp_path
+):
+    """Several spellings of the same day, all read back out of the file."""
+    sample_deal.prepared_date = prepared_date
+    properties = _save(sample_deal, tmp_path,
+                       name=f"d{abs(hash(prepared_date))}.docx").core_properties
+    assert (properties.created.year, properties.created.month,
+            properties.created.day) == expected
+    assert properties.modified == properties.created
+
+
+@pytest.mark.parametrize("prepared_date", [
+    "next Tuesday", "", "   ", "Q2 2026", "05/06/2026", "2026-13-45",
+])
+def test_g18_an_unreadable_prepared_date_leaves_the_dates_unset(
+    sample_deal, prepared_date, tmp_path
+):
+    """
+    `prepared_date` is a free-form `str`. An unreadable one is not guessed at
+    and does not raise — and "unset" means the property is genuinely absent,
+    not left at the template's 2013 date, which is the false date this gate
+    exists to remove. python-docx cannot clear a core datetime
+    (`cp.created = None` raises), so the element is removed.
+
+    `05/06/2026` is here on purpose: reading it requires choosing between 5
+    June and 6 May, and choosing is the silent interpretation this package
+    refuses elsewhere.
+
+    Red-proof (must fail): make `parse_prepared_date` fall back to
+    `datetime.datetime.now()` — the "just put something plausible there"
+    mutation, which is the one a future reader is most likely to make.
+    Observed: 6 failed — every case here, and nothing else in the suite.
+    """
+    sample_deal.prepared_date = prepared_date
+    path = str(tmp_path / f"u{abs(hash(prepared_date))}.docx")
+    CreditMemo(sample_deal).save_docx(path)
+    properties = Document(path).core_properties
+    assert properties.created is None, properties.created
+    assert properties.modified is None, properties.modified
+    # And not the template's date by another route.
+    import zipfile
+    core = zipfile.ZipFile(path).read("docProps/core.xml").decode("utf-8")
+    assert "dcterms:created" not in core, core
+    assert str(TEMPLATE_CREATED_YEAR) not in core, core
+    # The memo itself was still written.
+    assert len(Document(path).tables) > 0
+
+
+def test_g18_an_unreadable_prepared_date_still_sets_author_and_title(
+    sample_deal, tmp_path
+):
+    """The date is the only property the free-form field can withhold."""
+    sample_deal.prepared_date = "sometime in the spring"
+    properties = _save(sample_deal, tmp_path, name="partial.docx").core_properties
+    assert properties.author == sample_deal.prepared_by
+    assert properties.title == sample_deal.deal_name
+    assert properties.author != TEMPLATE_AUTHOR
+
+
+def test_g18_the_metadata_follows_the_deal_it_was_given(sample_deal, tmp_path):
+    """
+    Anchored against the DealProfile, not against a fixed string: two different
+    deals must produce two different sets of properties.
+    """
+    sample_deal.prepared_by = "A. Different Underwriter"
+    sample_deal.deal_name = "Northside Facility — $4.1MM Acquisition Loan"
+    sample_deal.prepared_date = "2031-02-28"
+    properties = _save(sample_deal, tmp_path, name="other.docx").core_properties
+    assert properties.author == "A. Different Underwriter"
+    assert properties.title == "Northside Facility — $4.1MM Acquisition Loan"
+    assert (properties.created.year, properties.created.month,
+            properties.created.day) == (2031, 2, 28)

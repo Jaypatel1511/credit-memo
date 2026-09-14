@@ -5,7 +5,7 @@ from creditmemo.data.schema import (
 )
 from creditmemo.memo import CreditMemo
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __all__ = [
     "CreditMemo", "DealProfile", "BorrowerProfile",
     "LoanTerms", "FinancialData", "NMTCTerms",

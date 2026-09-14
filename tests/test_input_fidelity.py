@@ -31,7 +31,7 @@ import pytest
 from creditmemo.data.schema import (
     BORROWER_TYPES as BORROWER_TYPES_FOR_TEST,
     BorrowerProfile, DealProfile, FinancialData, ImpactData, LoanTerms,
-    NMTCTerms, RiskFactor, SEVERITIES,
+    NMTCTerms, RECOMMENDATIONS, RiskFactor, SEVERITIES,
 )
 from creditmemo.memo import CreditMemo
 from creditmemo.sections import risk as risk_section
@@ -1538,6 +1538,30 @@ def test_g9_the_empty_string_gate_is_not_vacuous():
 # both branches are bare comparisons of the two values, there is no division,
 # so `is not None` is a complete fix and needs no zero-guard of its own.
 
+#: The bold lead-in of the memo's revenue sentence, and the label each
+#: `revenue_trend` value renders as.
+#:
+#: Written out here rather than imported from
+#: `creditmemo.sections.financial`: a gate that builds the expected sentence
+#: out of the renderer's own constants follows them wherever they go and can
+#: never fail. That is the blind spot this suite was built around — see the R5
+#: note at the top of tests/test_docx.py.
+ENDPOINT_PREFIX = "**Revenue, Year -2 vs Most Recent:**"
+RENDERED_LABEL_FOR = {"increasing": "Higher", "decreasing": "Lower",
+                      "stable": "Unchanged"}
+
+#: Fragments of 0.2.1's sentence. None of them may appear in any memo: each was
+#: a claim about "the historical period" made by code that read two of the
+#: three years, and "Stable" was a volatility finding produced by the equality
+#: of two endpoints.
+OLD_TREND_SPELLINGS = (
+    "**Revenue Trend:**",
+    "over the historical period",
+    "revenue has been increasing",
+    "revenue has been decreasing",
+    "revenue has been stable",
+)
+
 REVENUE_TREND_CASES = [
     # (revenue_y1, revenue_y3, direction)
     (5_000_000, 0,         "decreasing"),   # the collapse the memo would not report
@@ -1570,22 +1594,34 @@ def test_g10_revenue_trend_reports_a_direction_for_every_supplied_pair(y1, y3, d
 
 
 @pytest.mark.parametrize("y1,y3,direction", REVENUE_TREND_CASES)
-def test_g10_the_memo_states_the_trend_it_computed(y1, y3, direction):
-    """The property is not the memo. This gate reads the rendered line."""
+def test_g10_the_memo_states_the_comparison_it_computed(y1, y3, direction):
+    """
+    The property is not the memo. This gate reads the rendered line.
+
+    0.2.2 stopped rendering `revenue_trend`'s words — see G10b, which owns the
+    sentence's text. What this gate still holds is that every supplied pair
+    reaches the memo as *some* endpoint sentence carrying the direction the
+    property computed, zeros included. The direction is mapped to the rendered
+    label here rather than read from the renderer, so the two are held apart.
+    """
     md = CreditMemo(_deal(financials=FinancialData(
         revenue_y1=y1, revenue_y3=y3))).to_markdown()
-    assert f"**Revenue Trend:** {direction.title()} — " in md, (
-        f"revenue_y1={y1!r} revenue_y3={y3!r}: the memo states no trend")
-    assert f"revenue has been {direction} over the historical period." in md
+    assert f"{ENDPOINT_PREFIX} " in md, (
+        f"revenue_y1={y1!r} revenue_y3={y3!r}: the memo states no comparison")
+    assert f"{ENDPOINT_PREFIX} {RENDERED_LABEL_FOR[direction]} — " in md, (
+        f"revenue_y1={y1!r} revenue_y3={y3!r}: the memo does not state "
+        f"{RENDERED_LABEL_FOR[direction]!r}")
 
 
 @pytest.mark.parametrize("y1,y3", REVENUE_TREND_ABSENT)
-def test_g10_a_missing_endpoint_states_no_trend(y1, y3):
+def test_g10_a_missing_endpoint_states_no_comparison(y1, y3):
     """`None` is absence, and absence is still the one case with no direction."""
     f = FinancialData(revenue_y1=y1, revenue_y3=y3)
     assert f.revenue_trend is None
-    assert "**Revenue Trend:**" not in CreditMemo(
-        _deal(financials=f)).to_markdown()
+    md = CreditMemo(_deal(financials=f)).to_markdown()
+    assert ENDPOINT_PREFIX not in md
+    for dead in OLD_TREND_SPELLINGS:
+        assert dead not in md
 
 
 def test_g10_all_three_branches_execute():
@@ -2809,9 +2845,9 @@ def test_g14_the_revenue_table_and_the_revenue_trend_agree():
     for y1, y3, direction in cases:
         md = CreditMemo(_deal(financials=FinancialData(
             revenue_y1=y1, revenue_y3=y3))).to_markdown()
-        assert f"revenue has been {direction}" in md, (
+        assert f"{ENDPOINT_PREFIX} {RENDERED_LABEL_FOR[direction]} — " in md, (
             f"revenue_y1={y1}, revenue_y3={y3}: the memo does not state "
-            f"{direction!r}")
+            f"{RENDERED_LABEL_FOR[direction]!r}")
         row = [line for line in md.split("\n") if line.startswith("| Revenue |")]
         assert len(row) == 1, row
         first, last = row[0].split("|")[2].strip(), row[0].split("|")[4].strip()
@@ -2819,8 +2855,8 @@ def test_g14_the_revenue_table_and_the_revenue_trend_agree():
             assert first == last, f"'stable' over cells that differ: {row[0]!r}"
         else:
             assert first != last, (
-                f"the memo says revenue has been {direction} and renders the "
-                f"two endpoints identically: {row[0]!r}")
+                f"the memo says revenue is {RENDERED_LABEL_FOR[direction]} "
+                f"and renders the two endpoints identically: {row[0]!r}")
 
 
 # ── G14b — an element of a list field is a caller-supplied string ────────────
@@ -3062,3 +3098,740 @@ def test_the_only_thing_the_docx_adds_is_an_empty_paragraph(tmp_path):
     assert len(empties) == md_rules + md_tables, (
         f"the .docx has {len(empties)} empty paragraphs and the Markdown "
         f"accounts for {md_rules + md_tables}")
+
+
+# ── G10b — the revenue sentence says what the code computed ──────────────────
+#
+# 0.2.1's sentence read `revenue_y1` and `revenue_y3`, discarded `revenue_y2`,
+# and then described "the historical period". Measured on the published wheel:
+#
+#     | Revenue | $1.00MM | $9.00MM | $1.10MM |
+#     **Revenue Trend:** Increasing — revenue has been increasing over the
+#     historical period.
+#
+#     | Revenue | $3.00MM | $500,000 | $3.00MM |
+#     **Revenue Trend:** Stable — revenue has been stable over the historical
+#     period.
+#
+# — an 88% collapse in the most recent year reported as an increase, and
+# revenue down 83% and recovered reported to an Investment Committee as stable.
+#
+# THESE CASES ARE DRIVEN BY THE SUPPLIED SERIES. Each expected sentence below
+# is written out as a literal, against a three-point series a caller passed.
+# Nothing here re-derives the comparison the renderer performs, and nothing
+# imports the renderer's format string — a gate that rebuilt the sentence from
+# `creditmemo.sections.financial`'s own constants would follow them into the
+# next defect. Both contradiction cases above are in the table, and both fail
+# on 0.2.1's wording, which cannot produce any of these strings.
+
+#: (revenue_y1, revenue_y2, revenue_y3, the exact Markdown line).
+#:
+#: `revenue_y2` is supplied and different in every row for which a value is
+#: possible, so a renderer that reads it would have to agree with a sentence
+#: that names only the other two.
+ENDPOINT_SENTENCE_CASES = [
+    (
+        1_000_000, 9_000_000, 1_100_000,
+        "**Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of "
+        "$1.10MM is higher than Year -2 revenue of $1.00MM. This compares "
+        "those two columns only; Year -1 is not read.",
+    ),
+    (
+        3_000_000, 500_000, 3_000_000,
+        "**Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue "
+        "of $3.00MM equals Year -2 revenue of $3.00MM. This compares those two "
+        "columns only; Year -1 is not read.",
+    ),
+    (
+        3_000_000, 3_000_000, 3_000_000,
+        "**Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue "
+        "of $3.00MM equals Year -2 revenue of $3.00MM. This compares those two "
+        "columns only; Year -1 is not read.",
+    ),
+    (
+        5_000_000, 4_000_000, 0,
+        "**Revenue, Year -2 vs Most Recent:** Lower — Most Recent revenue of "
+        "$0 is lower than Year -2 revenue of $5.00MM. This compares those two "
+        "columns only; Year -1 is not read.",
+    ),
+    (
+        0, 1_000_000, 5_000_000,
+        "**Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of "
+        "$5.00MM is higher than Year -2 revenue of $0. This compares those two "
+        "columns only; Year -1 is not read.",
+    ),
+    (
+        900_000, None, 1_100_000,
+        "**Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of "
+        "$1.10MM is higher than Year -2 revenue of $900,000. This compares "
+        "those two columns only; Year -1 is not read.",
+    ),
+]
+
+
+def _endpoint_ids():
+    return [f"y1={c[0]!r},y2={c[1]!r},y3={c[2]!r}" for c in ENDPOINT_SENTENCE_CASES]
+
+
+@pytest.mark.parametrize("y1,y2,y3,expected", ENDPOINT_SENTENCE_CASES,
+                         ids=_endpoint_ids())
+def test_g10b_the_sentence_is_the_one_the_supplied_series_earns(y1, y2, y3, expected):
+    """
+    G10b. The rendered line, character for character, for a series a caller
+    passed — and 0.2.1's wording absent from the same memo.
+
+    Red-proof (must fail): restore the 0.2.1 body of
+    `creditmemo/sections/financial.generate`, i.e.
+
+        if f.revenue_trend is not None:
+            lines.append(
+                f"**Revenue Trend:** {f.revenue_trend.title()} — "
+                f"revenue has been {f.revenue_trend} over the historical period.")
+
+    Command:
+      rm -rf $HOME/pyc && mkdir -p $HOME/pyc && CREDITMEMO_REQUIRE_DOCX=1 \
+      PYTHONPYCACHEPREFIX=$HOME/pyc python -m pytest tests/ -q
+    Observed: 35 failed — 6 here, 6 in the .docx half below, 9 in the rewritten
+    G10 pair, 9 in the legacy-property gate, and one each in the equality,
+    sub-precision, columns, old-wording-sweep and G14 gates.
+    """
+    md = CreditMemo(_deal(financials=FinancialData(
+        revenue_y1=y1, revenue_y2=y2, revenue_y3=y3))).to_markdown()
+    assert expected in md, (
+        f"the memo does not carry the sentence this series earns.\n"
+        f"expected: {expected!r}\n"
+        f"rendered: "
+        f"{[l for l in md.split(chr(10)) if l.startswith('**Revenue,')]!r}")
+    for dead in OLD_TREND_SPELLINGS:
+        assert dead not in md, f"0.2.1 wording survives in the memo: {dead!r}"
+
+
+@pytest.mark.parametrize("y1,y2,y3,expected", ENDPOINT_SENTENCE_CASES,
+                         ids=_endpoint_ids())
+def test_g10b_the_same_sentence_reaches_the_word_document(y1, y2, y3, expected,
+                                                          tmp_path):
+    """The .docx is where the Investment Committee reads it."""
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _deal(financials=FinancialData(
+        revenue_y1=y1, revenue_y2=y2, revenue_y3=y3))
+    path = str(tmp_path / "endpoint.docx")
+    CreditMemo(deal).save_docx(path)
+    document = _docx.Document(path)
+    # The .docx flattens emphasis; nothing else about the line changes.
+    wanted = expected.replace("**", "")
+    paragraphs = [p.text for p in document.paragraphs]
+    assert wanted in paragraphs, (
+        f"the Word document does not carry the sentence.\nexpected: {wanted!r}")
+    blob = "\n".join(paragraphs)
+    for dead in OLD_TREND_SPELLINGS:
+        assert dead.replace("**", "") not in blob
+
+
+def test_g10b_the_sentence_names_the_columns_the_table_prints():
+    """
+    The two column headings the sentence names must be headings of the revenue
+    table in the same memo, read out of the rendered header row.
+
+    `revenue_y1 -> "Year -2"` is an ordering this package's own records flag as
+    undocumented, and it is not recoverable from a field called `y1`. So the
+    sentence names what the reader can see, and this holds the two together: if
+    the table is ever re-headed and the sentence is not, the memo names a
+    column it does not print.
+
+    Red-proof (must fail): swap REVENUE_FIRST_COLUMN and REVENUE_LAST_COLUMN in
+    creditmemo/sections/financial.py.
+    Observed: 32 failed — this gate, the 12 literal-sentence cases across both
+    formats, the 18 label gates, and G14's table/sentence agreement.
+    """
+    md = CreditMemo(_deal(financials=FinancialData(
+        revenue_y1=1_000_000, revenue_y3=2_000_000))).to_markdown()
+    header = [line for line in md.split("\n")
+              if line.startswith("| Metric | Year")]
+    assert len(header) == 1, header
+    columns = [c.strip() for c in header[0].strip("|").split("|")]
+    sentence = [l for l in md.split("\n") if l.startswith("**Revenue,")]
+    assert len(sentence) == 1, sentence
+    # The sentence has two halves: the claim, and the clause that says which
+    # column it did not read. Every one of the table's three data columns is
+    # named, and each must be named in the right half.
+    claim, _, scope = sentence[0].partition("This compares")
+    assert scope, sentence[0]
+    data_columns = [c for c in columns if c != "Metric"]
+    assert len(data_columns) == 3, columns
+
+    compared = [c for c in data_columns if c in claim]
+    excluded = [c for c in data_columns if c in scope]
+    assert len(compared) == 2, (
+        f"the claim names {compared} of {data_columns}; it must name exactly "
+        f"the two columns it compared")
+    assert len(excluded) == 1, (
+        f"the scope clause names {excluded}; it must name exactly the column "
+        f"that was not read")
+    assert not set(compared) & set(excluded)
+    # The compared pair is the outer pair, and the excluded one is between them.
+    first, last = compared
+    assert columns.index(first) < columns.index(excluded[0]) < columns.index(last)
+    # ...and the sentence's own label names them in the order the table prints.
+    assert f"{first} vs {last}" in sentence[0], sentence[0]
+
+
+def test_g10b_equality_of_two_endpoints_is_never_called_stable():
+    """
+    Equality of two numbers is not a volatility finding, and 0.2.1 called it
+    one — on a ±$1 band, because `stable` fired on exact equality alone.
+    Checked for the word in any casing rather than for one spelling: G14's
+    lesson is that asserting a single rendering of a value leaves its other
+    renderings alive.
+    """
+    for y2 in (500_000, 3_000_000, 90_000_000, None):
+        md = CreditMemo(_deal(financials=FinancialData(
+            revenue_y1=3_000_000, revenue_y2=y2,
+            revenue_y3=3_000_000))).to_markdown()
+        assert "Unchanged" in md
+        assert "stable" not in md.lower(), f"revenue_y2={y2!r}: {md!r}"
+
+
+def test_g10b_a_sub_precision_difference_is_not_claimed_as_two_figures():
+    """
+    The one case where quoting both cells would hand the reader a sentence
+    they can disprove from the row above: a real difference smaller than the
+    `$MM` unit can show. Both cells render `$1.00MM`, so the sentence must not
+    say one of them is higher *than the other one of them*.
+
+    Red-proof (must fail): make the `first_text == last_text` branch in
+    `revenue_endpoint_line` unreachable.
+    Observed: 1 failed — this gate, on "the sentence claims a difference
+    between two cells the table prints identically". It is the only gate in
+    the suite that sees it, which is the point of it.
+    """
+    md = CreditMemo(_deal(financials=FinancialData(
+        revenue_y1=1_000_000, revenue_y3=1_004_999))).to_markdown()
+    sentence = [l for l in md.split("\n") if l.startswith("**Revenue,")][0]
+    row = [l for l in md.split("\n") if l.startswith("| Revenue |")][0]
+    first, last = row.split("|")[2].strip(), row.split("|")[4].strip()
+    assert first == last == "$1.00MM", row
+    assert "Higher" in sentence
+    assert f"of {last} is higher than" not in sentence, (
+        f"the sentence claims a difference between two cells the table prints "
+        f"identically: {sentence!r}")
+    assert last in sentence, "the sentence must still quote what both render as"
+
+
+@pytest.mark.parametrize("y1,y2,y3", [
+    (None, 4_000_000, None),
+    (None, 1_000_000, 5_000_000),
+    (1_000_000, 5_000_000, None),
+    (None, None, None),
+])
+def test_g10b_a_partly_supplied_series_states_nothing(y1, y2, y3):
+    """
+    Which years are the endpoints when only some are supplied: the comparison
+    is stated only when BOTH `revenue_y1` and `revenue_y3` are supplied, which
+    is 0.2.1's condition unchanged. Measured on the published wheel, each of
+    these three partial series produced no sentence, and they still produce
+    none. Silence asserts nothing, so nothing about it can mislead; widening
+    the comparison to whichever two are outermost would put a sentence into
+    memos that have never carried one, and that is 0.3.0's decision to make.
+    """
+    md = CreditMemo(_deal(financials=FinancialData(
+        revenue_y1=y1, revenue_y2=y2, revenue_y3=y3))).to_markdown()
+    assert ENDPOINT_PREFIX not in md
+    assert "**Revenue," not in md
+
+
+@pytest.mark.parametrize("y1,y3,direction", REVENUE_TREND_CASES)
+def test_g10b_the_rendered_label_and_the_legacy_property_agree(y1, y3, direction):
+    """
+    `FinancialData.revenue_trend` keeps its 0.2.1 vocabulary for callers who
+    read it, and the memo no longer renders that vocabulary. The two must still
+    describe the same comparison, or the package says one thing in the artifact
+    and another through its API.
+    """
+    f = FinancialData(revenue_y1=y1, revenue_y3=y3)
+    md = CreditMemo(_deal(financials=f)).to_markdown()
+    assert f"{ENDPOINT_PREFIX} {RENDERED_LABEL_FOR[f.revenue_trend]} — " in md
+
+
+def test_g10b_no_shipped_module_renders_the_old_sentence():
+    """
+    The old wording may be quoted in a docstring as the thing being described,
+    but no module may build it. Searched for the f-string's fixed half.
+    """
+    for path in _package_sources():
+        text = io.open(path, encoding="utf-8").read()
+        assert 'f"**Revenue Trend:**' not in text, path.relative_to(ROOT)
+        assert "revenue has been {" not in text, path.relative_to(ROOT)
+
+
+# ── G15 — the NMTC footnote names exactly what the memo discards ─────────────
+
+NMTC_BASE = dict(
+    nmtc_allocation=10_000_000, credit_price=0.83, leverage_loan_rate=0.045,
+    qlici_a_rate=0.045, qlici_b_rate=0.010, cde_fee_rate=0.02,
+    cde_name="Chicago Development Fund", investor_name="US Bancorp CDC",
+    compliance_years=7,
+)
+
+#: A value for each NMTCTerms field that is different from NMTC_BASE's and is
+#: legal for the field. Nothing here is derived from what the renderer does
+#: with it.
+NMTC_PERTURBED = {
+    "nmtc_allocation": 7_777_777.0, "credit_price": 0.91,
+    "leverage_loan_rate": 0.1234, "qlici_a_rate": 0.2345,
+    "qlici_b_rate": 0.3456, "cde_fee_rate": 0.0777,
+    "cde_name": "ZZPerturbedCDE", "investor_name": "ZZPerturbedInvestor",
+    "compliance_years": 29,
+}
+
+
+def _nmtc_memo(overrides, tmp_path=None, name="nmtc.docx"):
+    """The two renderings of an NMTC deal with `overrides` applied."""
+    terms = dict(NMTC_BASE)
+    terms.update(overrides)
+    deal = _deal(
+        loan_terms=LoanTerms(deal_type="nmtc", amount=2_500_000),
+        nmtc_terms=NMTCTerms(**terms))
+    md = CreditMemo(deal).to_markdown()
+    if tmp_path is None:
+        return md, None
+    import docx as _docx
+    path = str(tmp_path / name)
+    CreditMemo(deal).save_docx(path)
+    document = _docx.Document(path)
+    blob = "\n".join([p.text for p in document.paragraphs]
+                     + [c.text for t in document.tables
+                        for r in t.rows for c in r.cells])
+    return md, blob
+
+
+def _discarded_nmtc_fields(tmp_path):
+    """
+    The NMTCTerms fields that reach neither rendering, re-derived here by
+    perturbing one field at a time and diffing both artifacts.
+
+    This does not re-implement anything: the oracle is the renderer's own
+    output, compared against itself. The renderer cannot share a blind spot
+    with a diff of its own bytes.
+    """
+    base_md, base_docx = _nmtc_memo({}, tmp_path, "base.docx")
+    discarded = []
+    for i, (field_name, value) in enumerate(NMTC_PERTURBED.items()):
+        md, blob = _nmtc_memo({field_name: value}, tmp_path, f"p{i}.docx")
+        if md == base_md and blob == base_docx:
+            discarded.append(field_name)
+    return discarded
+
+
+def test_g15_the_footnote_names_exactly_the_inputs_the_memo_discards(tmp_path):
+    """
+    G15. `leverage_loan_rate`, `qlici_a_rate`, `qlici_b_rate` and
+    `compliance_years` reach neither rendering at any value; three of them are
+    *required positional arguments*. The README has disclosed this since 0.2.1.
+    The memo did not, and the memo is what reaches an Investment Committee: the
+    section is headed **NMTC Structure** and nothing marked the table partial.
+
+    The discarded set is re-derived by perturbation here, not read from the
+    package, so a fifth discarded field — or one of these four starting to
+    render — reddens instead of going unnoticed.
+
+    Red-proof (must fail): drop `("compliance_years", "the compliance period")`
+    from UNRENDERED_NMTC_INPUTS, i.e. under-report the discarded set the way
+    a fifth discarded field would.
+    Observed: 1 failed — this gate. Deleting the footnote itself does *not*
+    redden it (the declared set is still right); the two gates below catch
+    that, at 2 failed.
+    """
+    from creditmemo.sections.transaction import UNRENDERED_NMTC_INPUTS
+
+    pytest.importorskip("docx")
+    discarded = _discarded_nmtc_fields(tmp_path)
+    declared = [name for name, _ in UNRENDERED_NMTC_INPUTS]
+    assert sorted(discarded) == sorted(declared), (
+        f"the footnote names {sorted(declared)}; the memo actually discards "
+        f"{sorted(discarded)}")
+
+
+def test_g15_the_footnote_is_in_both_renderings_and_names_each_input(tmp_path):
+    """
+    Every label the footnote declares must appear in the rendered footnote, in
+    both formats. Asserted against the labels, not against the assembled
+    sentence, so renaming one without rebuilding the note reds here.
+    """
+    from creditmemo.sections.transaction import UNRENDERED_NMTC_INPUTS
+
+    pytest.importorskip("docx")
+    md, blob = _nmtc_memo({}, tmp_path, "note.docx")
+    for rendering in (md, blob):
+        assert "does not show every NMTC input" in rendering
+        for _, label in UNRENDERED_NMTC_INPUTS:
+            assert label in rendering, f"{label!r} missing from a rendering"
+
+
+def test_g15_the_footnote_is_prose_and_not_a_table_row(tmp_path):
+    """
+    A row would change the .docx table shape, which is the thing 0.2.1
+    deferred. The footnote must be a paragraph: not a `|` line in the Markdown,
+    and the NMTC table must still have the row count it had.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    md, _ = _nmtc_memo({})
+    note = [l for l in md.split("\n") if "does not show every NMTC input" in l]
+    assert len(note) == 1, note
+    assert not note[0].startswith("|"), note[0]
+
+    deal = _deal(loan_terms=LoanTerms(deal_type="nmtc", amount=2_500_000),
+                 nmtc_terms=NMTCTerms(**NMTC_BASE))
+    path = str(tmp_path / "shape.docx")
+    CreditMemo(deal).save_docx(path)
+    document = _docx.Document(path)
+    nmtc_tables = [t for t in document.tables
+                   if t.rows[0].cells[0].text == "Component"]
+    assert len(nmtc_tables) == 1
+    # header + the six always-rendered rows + CDE + Tax Credit Investor
+    assert len(nmtc_tables[0].rows) == 9
+    assert all(len(r.cells) == 2 for r in nmtc_tables[0].rows)
+
+
+def test_g15_the_perturbation_gate_is_not_vacuous(tmp_path):
+    """
+    Guard the guard: if perturbing a field never changed a rendering, every
+    field would look discarded and G15 would agree with any footnote at all.
+    """
+    pytest.importorskip("docx")
+    discarded = _discarded_nmtc_fields(tmp_path)
+    assert discarded, "no NMTCTerms field is discarded — G15 has nothing to hold"
+    assert len(discarded) < len(NMTC_PERTURBED), (
+        "perturbation moved no rendering at all; the diff is broken, not the "
+        "renderer")
+
+
+# ── G16 — every rendered memo says which release wrote it ────────────────────
+
+def test_g16_both_renderings_carry_a_version_stamp(tmp_path):
+    """
+    G16. Measured on the published 0.2.1 wheel, no rendered memo contained
+    `0.2.1`, `credit-memo`, `creditmemo`, `Generated` or `version` in either
+    format. The README's own remediation instruction — *"If you generated Word
+    memos with either release, regenerate them"* — could not be carried out
+    against the artifacts the package produces.
+
+    Red-proof (must fail): delete the `version_footer()` append from
+    creditmemo/renderers/markdown.render.
+    Observed: 3 failed — this gate, the sentinel gate below and the
+    appears-once gate. No other gate in the suite sees the footer go.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    import creditmemo
+
+    deal = _deal()
+    md = CreditMemo(deal).to_markdown()
+    path = str(tmp_path / "stamp.docx")
+    CreditMemo(deal).save_docx(path)
+    paragraphs = [p.text for p in _docx.Document(path).paragraphs]
+
+    expected = f"Generated by credit-memo {creditmemo.__version__}"
+    assert expected in md.split("\n"), md.split("\n")[-5:]
+    assert expected in paragraphs, paragraphs[-5:]
+
+
+def test_g16_the_footer_follows_the_installed_version(monkeypatch, tmp_path):
+    """
+    **This is the gate that fails on a hardcoded version string.** Matching the
+    current version proves nothing: a literal `"0.2.2"` in the renderer passes
+    that and ships a memo that lies about itself at 0.2.3. So the installed
+    `__version__` is replaced with a sentinel and the footer must follow it,
+    in both renderings, with the real version gone.
+
+    Red-proof (must fail): replace `__version__` in
+    `creditmemo.renderers.markdown.version_footer` with the literal "0.2.2".
+    Observed: 1 failed — "'Generated by credit-memo 9.9.9-sentinel' is not in
+    the memo". The version-matching gate above stays green against that
+    mutation, which is exactly why this one exists.
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    import creditmemo
+
+    real = creditmemo.__version__
+    sentinel = "9.9.9-sentinel"
+    assert sentinel != real
+    monkeypatch.setattr(creditmemo, "__version__", sentinel)
+
+    deal = _deal()
+    md = CreditMemo(deal).to_markdown()
+    path = str(tmp_path / "sentinel.docx")
+    CreditMemo(deal).save_docx(path)
+    paragraphs = [p.text for p in _docx.Document(path).paragraphs]
+
+    wanted = f"Generated by credit-memo {sentinel}"
+    assert wanted in md, f"{wanted!r} is not in the memo"
+    assert wanted in paragraphs, f"{wanted!r} is not in the Word document"
+    assert real not in md, (
+        f"the footer carries {real!r} with __version__ set to {sentinel!r} — "
+        f"it is a literal, not a read")
+    assert real not in "\n".join(paragraphs)
+
+
+def test_g16_the_stamp_appears_once(tmp_path):
+    """One memo, one stamp. R5's invariant applies to the footer too."""
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    import creditmemo
+
+    deal = _deal()
+    md = CreditMemo(deal).to_markdown()
+    path = str(tmp_path / "once.docx")
+    CreditMemo(deal).save_docx(path)
+    paragraphs = [p.text for p in _docx.Document(path).paragraphs]
+    expected = f"Generated by credit-memo {creditmemo.__version__}"
+    assert md.count(expected) == 1
+    assert paragraphs.count(expected) == 1
+
+
+def test_g16_no_shipped_module_writes_the_version_as_a_literal():
+    """
+    The version lives in pyproject.toml and creditmemo/__init__.py, and
+    tests/test_packaging.py holds those two in step. No third site.
+    """
+    import creditmemo
+
+    for path in _package_sources():
+        if path.name == "__init__.py" and path.parent.name == "creditmemo":
+            continue
+        text = io.open(path, encoding="utf-8").read()
+        assert f'"{creditmemo.__version__}"' not in text, (
+            f"{path.relative_to(ROOT)} carries the version as a literal")
+
+
+# ── G17 — the conditions block is labelled for its recommendation ────────────
+
+CONDITIONS_FOR_TEST = [
+    "Receipt of final appraisal satisfactory to lender",
+    "Completion of environmental review",
+]
+
+#: (recommendation, the Executive Summary lead-in, the IC Recommendation
+#: heading). Written out, not imported from the schema: a gate that reads the
+#: renderer's own tables agrees with whatever they say.
+CONDITIONS_LABELS_FOR_TEST = [
+    ("approve",            "**Conditions recorded with this recommendation:**",
+                           "### Conditions Recorded"),
+    ("approve_conditions", "**Subject to the following conditions:**",
+                           "### Conditions of Approval"),
+    ("table",              "**Conditions recorded with this recommendation:**",
+                           "### Conditions Recorded"),
+    ("decline",            "**Conditions recorded with this recommendation:**",
+                           "### Conditions Recorded"),
+]
+
+
+def _deal_with_recommendation(recommendation, conditions):
+    return DealProfile(
+        deal_name="Test Deal",
+        borrower=BorrowerProfile(name="Test Borrower", borrower_type="nonprofit",
+                                 sector="healthcare", state="IL", city="Chicago"),
+        loan_terms=LoanTerms(deal_type="loan", amount=2_500_000),
+        financial_data=FinancialData(dscr=1.35),
+        impact_data=ImpactData(),
+        recommendation=recommendation,
+        prepared_by="Jay Patel", prepared_date="2026-05-06",
+        fund_name="Test Fund", conditions=list(conditions))
+
+
+@pytest.mark.parametrize("recommendation,lead_in,heading",
+                         CONDITIONS_LABELS_FOR_TEST,
+                         ids=[c[0] for c in CONDITIONS_LABELS_FOR_TEST])
+def test_g17_the_conditions_block_is_labelled_for_its_recommendation(
+    recommendation, lead_in, heading
+):
+    """
+    G17. Through 0.2.1 both labels were literals printed under every
+    recommendation. Measured on the published wheel:
+
+        recommendation='decline'  ->  **DECLINE**
+                                      **Subject to the following conditions:**
+                                      ### Conditions of Approval
+
+    — a heading naming the terms of an approval, over a numbered list, in a
+    memo that refuses the deal. `RECOMMENDATIONS['approve']` is literally
+    "Approve as presented", and it printed the same two lines.
+
+    Red-proof (must fail): restore the literal
+    `lines.append("**Subject to the following conditions:**")` in
+    creditmemo/sections/executive.py and `lines += ["### Conditions of
+    Approval", ""]` in creditmemo/sections/recommendation.py.
+    Observed: 7 failed — 3 of the 4 cases here (`approve`, `table`,
+    `decline`), the same 3 in the .docx half, and the exclusivity gate.
+    `approve_conditions` stays green in both, because its labels are the two
+    literals 0.2.1 printed everywhere.
+    """
+    md = CreditMemo(
+        _deal_with_recommendation(recommendation, CONDITIONS_FOR_TEST)).to_markdown()
+    assert lead_in in md, f"{recommendation}: lead-in {lead_in!r} not rendered"
+    assert heading in md, f"{recommendation}: heading {heading!r} not rendered"
+
+
+@pytest.mark.parametrize("recommendation,lead_in,heading",
+                         CONDITIONS_LABELS_FOR_TEST,
+                         ids=[c[0] for c in CONDITIONS_LABELS_FOR_TEST])
+def test_g17_the_labels_reach_the_word_document(recommendation, lead_in,
+                                                heading, tmp_path):
+    """Both labels survive into the .docx, which is what the IC reads."""
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _deal_with_recommendation(recommendation, CONDITIONS_FOR_TEST)
+    path = str(tmp_path / f"{recommendation}.docx")
+    CreditMemo(deal).save_docx(path)
+    paragraphs = [p.text for p in _docx.Document(path).paragraphs]
+    assert lead_in.replace("**", "") in paragraphs
+    assert heading.lstrip("# ") in paragraphs
+
+
+def test_g17_only_a_conditional_approval_says_conditions_of_approval():
+    """
+    The exclusivity half. A gate that only checks each label is present passes
+    on a renderer that prints both.
+    """
+    for recommendation, _, _ in CONDITIONS_LABELS_FOR_TEST:
+        md = CreditMemo(_deal_with_recommendation(
+            recommendation, CONDITIONS_FOR_TEST)).to_markdown()
+        says_approval = "Conditions of Approval" in md
+        says_subject = "Subject to the following conditions" in md
+        expected = recommendation == "approve_conditions"
+        assert says_approval is expected, (
+            f"{recommendation}: 'Conditions of Approval' present={says_approval}")
+        assert says_subject is expected, (
+            f"{recommendation}: 'Subject to the following conditions' "
+            f"present={says_subject}")
+        if not expected:
+            assert ("not an approval subject to them" in md), (
+                f"{recommendation}: the block does not say it is not an "
+                f"approval's terms")
+
+
+@pytest.mark.parametrize("recommendation", list(RECOMMENDATIONS))
+def test_g17_no_supplied_condition_is_dropped(recommendation, tmp_path):
+    """
+    Relabelling, not refusing, and not dropping. Every condition a caller
+    supplied must appear in both renderings under every recommendation — this
+    is the property that rules out "silently omit the block under a decline".
+    """
+    pytest.importorskip("docx")
+    import docx as _docx
+
+    deal = _deal_with_recommendation(recommendation, CONDITIONS_FOR_TEST)
+    md = CreditMemo(deal).to_markdown()
+    path = str(tmp_path / f"keep-{recommendation}.docx")
+    CreditMemo(deal).save_docx(path)
+    blob = "\n".join(p.text for p in _docx.Document(path).paragraphs)
+    for condition in CONDITIONS_FOR_TEST:
+        # Twice in the Markdown: the Executive Summary bullet and the numbered
+        # item in the IC Recommendation section.
+        assert md.count(condition) == 2, (
+            f"{recommendation}: {condition!r} appears {md.count(condition)} "
+            f"times in the Markdown")
+        assert blob.count(condition) == 2, (
+            f"{recommendation}: {condition!r} appears {blob.count(condition)} "
+            f"times in the Word document")
+
+
+def test_g17_every_recommendation_has_both_labels():
+    """
+    Totality. A fifth recommendation value added to RECOMMENDATIONS without a
+    label would raise KeyError in the renderer on the first memo that used it.
+    """
+    from creditmemo.data.schema import CONDITIONS_HEADING, CONDITIONS_LEAD_IN
+
+    assert set(CONDITIONS_LEAD_IN) == set(RECOMMENDATIONS)
+    assert set(CONDITIONS_HEADING) == set(RECOMMENDATIONS)
+    assert {r for r, _, _ in CONDITIONS_LABELS_FOR_TEST} == set(RECOMMENDATIONS)
+
+
+def test_g17_no_conditions_means_no_block():
+    """0.2.1's behaviour for an empty list, unchanged."""
+    for recommendation, lead_in, heading in CONDITIONS_LABELS_FOR_TEST:
+        md = CreditMemo(_deal_with_recommendation(recommendation, [])).to_markdown()
+        assert lead_in not in md
+        assert heading not in md
+        assert "not an approval subject to them" not in md
+
+
+# ── G19 — the impact-counter asymmetry is documented, not fixed ──────────────
+
+def test_g19_the_two_jobs_counters_render_a_zero_and_the_other_five_do_not():
+    """
+    The behaviour the README paragraph describes, pinned so the paragraph
+    cannot go stale. `jobs_created` and `jobs_retained` are `int = 0`, not
+    `Optional`, so an untouched `ImpactData()` asserts zero jobs created to an
+    Investment Committee; the other five counters suppress a stated zero and
+    are structurally silent instead.
+
+    NOT FIXED IN 0.2.2. Making them `Optional[int]` is a breaking change to the
+    input contract, and suppressing a stated `0` trades one fabrication for the
+    other — it would delete a real "we checked, and this deal creates no jobs".
+    0.3.0. This gate holds the current behaviour so the disclosure stays true.
+
+    Red-proof (must fail): gate the three jobs rows in
+    creditmemo/sections/impact.py on truthiness, i.e. apply the five other
+    counters' rule to them.
+    Observed: 1 failed — this gate, and nothing else in the suite. Silently
+    dropping a stated zero from a community development memo is invisible to
+    the other 499 gates, which is why this one is not decoration.
+    """
+    md = CreditMemo(_deal(impact=ImpactData())).to_markdown()
+    assert "| Jobs Created | 0 |" in md
+    assert "| Jobs Retained | 0 |" in md
+    assert "| Total Jobs | 0 |" in md
+
+    zeroed = CreditMemo(_deal(impact=ImpactData(
+        affordable_units=0, sq_ft_community_space=0.0, patients_served=0,
+        students_served=0, businesses_supported=0))).to_markdown()
+    for label in ("Affordable Units", "Community Space (sq ft)",
+                  "Patients Served", "Students Served", "Businesses Supported"):
+        assert f"| {label} |" not in zeroed, (
+            f"{label} now renders a stated zero; the README says it does not")
+
+
+def test_g19_cost_per_job_moves_on_one_unfilled_field():
+    """
+    The consequence the README quantifies: `Cost per Job` is derived from
+    `jobs_created + jobs_retained`, so a deal that filled in one of the two and
+    left the other alone gets a figure that is a multiple of the true one.
+    Measured, not asserted: the two figures are read out of the rendered memos.
+
+    The multiple here is 4x — 10 jobs stated against 30 more not stated.
+    """
+    both = CreditMemo(_deal(impact=ImpactData(
+        jobs_created=10, jobs_retained=30))).to_markdown()
+    one = CreditMemo(_deal(impact=ImpactData(jobs_created=10))).to_markdown()
+
+    def cost(md):
+        row = [l for l in md.split("\n") if l.startswith("| Cost per Job |")]
+        assert len(row) == 1, row
+        return row[0].split("|")[2].strip()
+
+    assert cost(both) == "$62,500"
+    assert cost(one) == "$250,000"
+
+
+def test_g19_the_readme_documents_the_asymmetry():
+    """
+    The README's counter list omitted both jobs fields entirely, so the one
+    section that tells a reader which counters treat `0` as absent did not
+    mention the two that do not.
+    """
+    readme = io.open(ROOT / "README.md", encoding="utf-8").read()
+    for needle in ("jobs_created", "jobs_retained", "Cost per Job"):
+        assert needle in readme, f"the README does not mention {needle}"
+    lowered = readme.lower()
+    assert "breaking" in lowered
+    assert "0.3.0" in readme
