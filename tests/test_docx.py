@@ -22,7 +22,7 @@ import pytest
 
 from creditmemo.data.schema import RiskFactor
 from creditmemo.memo import CreditMemo
-from creditmemo.renderers.docx import TABLE_STYLE
+from creditmemo.renderers.docx import TABLE_STYLE, parse_prepared_date
 from creditmemo.renderers.markdown import render as render_markdown
 from creditmemo.tables import (
     block_to_rows,
@@ -688,3 +688,185 @@ def test_g18_the_metadata_follows_the_deal_it_was_given(sample_deal, tmp_path):
     assert properties.title == "Northside Facility — $4.1MM Acquisition Loan"
     assert (properties.created.year, properties.created.month,
             properties.created.day) == (2031, 2, 28)
+
+
+# ── G21 — a property the deal does not state is absent, not the word "None" ──
+#
+# 0.2.2 is the release that started writing core properties at all, so a Word
+# Author reading literally `None` is this release's doing. `prepared_by` and
+# `deal_name` are declared `str` and neither is validated, so `None` reaches
+# the renderer through the ordinary field-by-field build R20's comment
+# describes. Measured on the 0.2.2 wheel:
+#
+#     prepared_by=None  -> <dc:creator>None</dc:creator>
+#     deal_name=None    -> <dc:title>None</dc:title>
+#     prepared_by=''    -> <dc:creator></dc:creator>
+#
+# The posture is Item 5's, unchanged: not written, not substituted for, not
+# raised on. The element is removed, because *not setting* it leaves
+# python-docx's template default — `python-docx` as the author — which is the
+# false metadata 0.2.2 exists to remove.
+
+#: The values that state nothing. `is_supplied`'s three cases, written out here
+#: rather than imported, so this gate does not follow the predicate it is
+#: holding.
+UNSTATED_VALUES = [None, "", "   "]
+
+
+def _core_xml(path):
+    import zipfile
+    return zipfile.ZipFile(path).read("docProps/core.xml").decode("utf-8")
+
+
+@pytest.mark.parametrize("value", UNSTATED_VALUES,
+                         ids=["none", "empty", "whitespace"])
+def test_g21_an_unstated_prepared_by_leaves_the_author_absent(
+    sample_deal, value, tmp_path
+):
+    """
+    G21. Read out of the saved file, twice: through python-docx, and in the
+    bytes of `docProps/core.xml`, because a property can read one way through
+    the API and be written another way into the part.
+
+    Red-proof (must fail): restore `properties.author = deal.prepared_by` in
+    `creditmemo.renderers.docx._set_core_properties`.
+    """
+    sample_deal.prepared_by = value
+    path = str(tmp_path / f"author{UNSTATED_VALUES.index(value)}.docx")
+    CreditMemo(sample_deal).save_docx(path)
+    core = _core_xml(path)
+
+    assert "dc:creator" not in core, core
+    assert ">None<" not in core, core
+    assert f">{TEMPLATE_AUTHOR}<" not in core, core
+    assert Document(path).core_properties.author == ""
+    # And the memo itself was still written; nothing raised.
+    assert len(Document(path).tables) > 0
+
+
+@pytest.mark.parametrize("value", UNSTATED_VALUES,
+                         ids=["none", "empty", "whitespace"])
+def test_g21_an_unstated_deal_name_leaves_the_title_absent(
+    sample_deal, value, tmp_path
+):
+    """Same rule, same posture, the other text property."""
+    sample_deal.deal_name = value
+    path = str(tmp_path / f"title{UNSTATED_VALUES.index(value)}.docx")
+    CreditMemo(sample_deal).save_docx(path)
+    core = _core_xml(path)
+
+    assert "dc:title" not in core, core
+    assert ">None<" not in core, core
+    assert Document(path).core_properties.title == ""
+    assert len(Document(path).tables) > 0
+
+
+def test_g21_a_stated_author_and_title_are_still_written(sample_deal, tmp_path):
+    """
+    Guard the guard. A renderer that removed both elements unconditionally
+    would pass every case above, and would undo G18.
+    """
+    path = str(tmp_path / "stated.docx")
+    CreditMemo(sample_deal).save_docx(path)
+    core = _core_xml(path)
+    properties = Document(path).core_properties
+    assert properties.author == sample_deal.prepared_by
+    assert properties.title == sample_deal.deal_name
+    assert "dc:creator" in core
+    assert "dc:title" in core
+
+
+def test_g21_the_body_still_renders_what_it_always_rendered(sample_deal):
+    """
+    The scope line, gated. The memo *body* has printed `None` for an unstated
+    `prepared_by` since before 0.2.2; that is a disclosed defect whose fix is
+    0.3.0, and this release fixes the metadata only. If a later round changes
+    the body, this gate reddens and the disclosure gets revisited on purpose
+    rather than going quietly stale.
+    """
+    sample_deal.prepared_by = None
+    md = CreditMemo(sample_deal).to_markdown()
+    assert "**Prepared By:** None" in md
+
+
+# ── The README's prepared_date table is what the parser does ─────────────────
+
+#: The header row of the README table this gate reads. The spellings are not
+#: duplicated here: a list written into the test is a third copy that can agree
+#: with neither the README nor the parser.
+PREPARED_DATE_TABLE_HEADER = "| `prepared_date` written as | Read as a date |"
+
+
+def _readme_prepared_date_rows():
+    """[(spelling, "yes"|"no")] as README.md states them, in document order."""
+    lines = io.open(README, encoding="utf-8").read().split("\n")
+    start = lines.index(PREPARED_DATE_TABLE_HEADER)
+    rows = []
+    for line in lines[start + 2:]:
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        rows.append((cells[0].strip("`"), cells[1]))
+    return rows
+
+
+def test_the_readme_date_table_states_what_the_parser_does():
+    """
+    Item 1. README.md said `prepared_date` was read when written as
+    `2026-05-06`, `2026/05/06`, `May 6, 2026`, `6 May 2026`, "or those with a
+    time". Measured on the 0.2.2 wheel, only the ISO forms take a time:
+
+        '2026-05-06 09:30:00'   -> 2026-05-06 09:30:00
+        '2026-05-06T09:30:00'   -> 2026-05-06 09:30:00
+        'May 6, 2026 09:30'     -> None
+        '6 May 2026 09:30'      -> None
+        '2026/05/06 09:30:00'   -> None
+
+    It fails safe — the property is left unset, never guessed — so nothing
+    wrong reached a document, but the prose was false. The prose is now a table
+    and this reads it back out of the file, in **both** directions: a spelling
+    the README calls readable must parse, and one it calls unreadable must not.
+
+    Red-proof (must fail): add `"%Y/%m/%d %H:%M:%S"` to
+    `creditmemo.renderers.docx.PREPARED_DATE_FORMATS` — the widening this round
+    declined — or delete `"%d %B %Y"` from it.
+    """
+    rows = _readme_prepared_date_rows()
+    assert len(rows) >= 10, rows
+    assert any(claim == "yes" for _, claim in rows), rows
+    assert any(claim == "no" for _, claim in rows), rows
+
+    wrong = []
+    for spelling, claim in rows:
+        parsed = parse_prepared_date(spelling)
+        if (parsed is not None) != (claim == "yes"):
+            wrong.append((spelling, claim, parsed))
+    assert not wrong, (
+        "README.md and parse_prepared_date disagree (spelling, README, "
+        f"parsed): {wrong}")
+
+
+def test_the_readme_time_claim_holds():
+    """
+    The narrowed claim itself: **a time of day is read only after the ISO
+    `YYYY-MM-DD` date.** Every time-bearing spelling the README calls readable
+    must be ISO-dated, and the time must survive into the parsed value — a
+    parser that silently dropped the clock would pass the table gate above.
+
+    Red-proof (must fail): add `"%B %d, %Y %H:%M"` to PREPARED_DATE_FORMATS.
+    """
+    rows = _readme_prepared_date_rows()
+    with_time = [(s, c) for s, c in rows if ":" in s]
+    assert with_time, rows
+    readable = [s for s, c in with_time if c == "yes"]
+    unreadable = [s for s, c in with_time if c == "no"]
+    assert readable, "no time-bearing spelling is documented as readable"
+    assert unreadable, "the gate has no negative case"
+
+    for spelling in readable:
+        assert re.match(r"^\d{4}-\d{2}-\d{2}[T ]", spelling), spelling
+        parsed = parse_prepared_date(spelling)
+        assert (parsed.hour, parsed.minute) == (9, 30), (spelling, parsed)
+
+    assert "A time of day is read only after the ISO" in io.open(
+        README, encoding="utf-8").read()

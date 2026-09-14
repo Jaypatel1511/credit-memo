@@ -14,18 +14,18 @@ Everything measured in this entry was measured on CPython 3.10.12 with
 python-docx 1.2.0, against the code on this branch, and the "before" figures
 were measured against the **published 0.2.1 wheel installed from PyPI** — not
 against this repository at the 0.2.1 tag, and not from the 0.2.1 CHANGELOG.
-The suite goes from **427 tests to 500**, both measured: 427 at `c21e109`
-(the 0.2.1 merge), 500 on this commit, all passing with
-`CREDITMEMO_REQUIRE_DOCX=1`. Every gate added below was watched to fail against
+The suite goes from **427 tests to 523**, all measured: 427 at `c21e109`
+(the 0.2.1 merge), 500 at `56bd00b` (the build commit, before the hostile
+audit), 523 on this commit, all passing with `CREDITMEMO_REQUIRE_DOCX=1`. Every gate added below was watched to fail against
 a named mutation before being trusted; each mutation and the number of tests it
 reddened is recorded in the gate's own docstring, and the failure count is the
 evidence — a passed count is a running total of the rest of the file and goes
 stale on the next commit.
 
 This release changes **no schema, no constructor signature, no table shape and
-no required field**. Nothing an existing caller does stops working. Four of the
-five fixes change what a memo *says*; one changes only the Word file's
-properties.
+no required field**. Nothing an existing caller does stops working. Most of the
+fixes change what a memo *says*; two change only the Word file's properties, and
+one changes only a gate.
 
 ### Fixed
 
@@ -48,7 +48,10 @@ Committee it was **stable**.
 The sentence read `revenue_y1` and `revenue_y3` and discarded `revenue_y2`
 entirely — measured by perturbation on the published wheel: `revenue_y2` at
 `0`, `1`, `$50MM`, `-$10MM` and `None` all produced a **byte-identical**
-sentence. `Stable` fired on exact equality of the two endpoints, a ±$1 band.
+sentence. `Stable` fired on exact equality of the two endpoints — bare `>` and
+`<` with a fall-through, so the equality condition was **zero-width**. An
+earlier draft of this entry called it "a ±$1 band"; there was no tolerance in
+the 0.2.1 code and there is none now.
 
 0.2.2 does not add a trend classifier. A real one reads all supplied points and
 needs a volatility term, and that is a methodology question this release is not
@@ -206,6 +209,155 @@ core-property encoding appends a `Z`; `modified` is set equal to `created`,
 because the package writes the document once and never edits it, and reaching
 for the wall clock would make two renders of one deal differ.
 
+**A non-finite revenue endpoint produced an incoherent sentence, and in one
+case a false one.**
+
+Found by the hostile audit of this release. Measured on this branch before the
+fix:
+
+    | Revenue | $nan | N/A | $nan |
+    **Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue equals
+    Year -2 revenue by less than the row above can show; both are written $nan.
+
+    | Revenue | $nan | N/A | $3.00MM |
+    **Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue of
+    $3.00MM equals Year -2 revenue of $nan.
+
+`nan != nan` is `True`, so the `Unchanged` fall-through caught it and the
+sub-precision branch — whose verb is *equals* — wrote it out. The second line
+**states that $3.00MM equals $nan**, which is a false sentence in the one place
+this release exists to make unfalsifiable. `inf` went the other way and
+produced a grammatical sentence quoting `$infMM`.
+
+**It is not a regression**, and that is not a reason to defer it: 0.2.1
+rendered the same input as *"Stable — revenue has been stable over the
+historical period"*, which is worse. Nor is it hypothetical. A blank cell read
+out of a spreadsheet of borrower financials through pandas is
+`numpy.float64(nan)`, **not** `None` — measured, `pd.DataFrame({"rev": [1e6,
+None]})["rev"][1]` — so the missing-endpoint guard never sees it. That is the
+exact route the R20 comment in `sections/financial.py` already describes.
+
+**A non-finite endpoint now renders no comparison sentence at all**, the same
+silence a missing endpoint already produces. Silence asserts nothing. No input
+validation was added and nothing raises: validating `revenue_y1` is a schema
+change and is 0.3.0.
+
+Which types the predicate was checked against, since `math.isfinite` is not
+universal: `int` (including `10**30`), `float`, `bool` and `decimal.Decimal`
+all answer — `Decimal("NaN")` and `Decimal("Infinity")` answer `False`, which
+is the case a reader would expect a float-shaped guard to miss. So do
+`numpy.float64` and `numpy.int64`, which is what pandas hands over.
+`pandas.NA` and `pandas.NaT` are the two that make `math.isfinite` *raise*, so
+the call is wrapped and an unjudgeable value is treated as non-finite; both
+already raise earlier than this function in a full render — `money(pd.NA)`
+raises *boolean value of NA is ambiguous* and `money(pd.NaT)` raises *bad
+operand type for abs()*, and the Revenue table row is built before the
+sentence — so nothing about their end-to-end behaviour changes.
+
+**`prepared_by=None` wrote the Word Author as the literal string `None`.**
+
+Also from the hostile audit. Measured on this branch before the fix:
+
+    prepared_by=None  -> <dc:creator>None</dc:creator>
+    deal_name=None    -> <dc:title>None</dc:title>
+    prepared_by=''    -> <dc:creator></dc:creator>
+
+`prepared_by` and `deal_name` are declared `str` and neither is validated, so a
+`None` arrives through the ordinary field-by-field build. The memo *body* has
+rendered `None` for these fields since before this release and that is
+disclosed — but **0.2.2 is the release that promotes it into the document
+metadata a DMS indexes on**, so a loan file whose Author is literally `None` is
+this release's doing.
+
+A `None`, empty or whitespace-only value now leaves the core property
+**absent**, the same posture an unreadable `prepared_date` already takes.
+Nothing is validated, nothing is substituted, nothing raises. "Absent" again
+had to mean the element is removed rather than the setter skipped: skipping it
+leaves python-docx's template default, `python-docx`, which is the false Author
+this release exists to remove. Absence is decided by
+`creditmemo.fields.is_supplied`, so this agrees with the rule the other 16
+optional strings already follow instead of inventing a second one.
+
+The body still renders `None`. That is older than this release, is disclosed
+below, and is 0.3.0; a gate holds it so the disclosure cannot go stale.
+
+**The gate against a hardcoded version asserted one spelling of it.**
+
+`test_g16_no_shipped_module_writes_the_version_as_a_literal` read
+
+    assert f'"{creditmemo.__version__}"' not in text
+
+which rejects only the double-quoted form. The audit replaced
+`version_footer()` with `return f"Generated by credit-memo 0.2.2"` — an
+*interpolated* literal — and **this gate stayed green**; only the companion
+sentinel gate reddened. That is the G14 shape this package has now hit seven
+times: a gate asserting one spelling of a value where the property is what
+matters.
+
+The gate now parses each shipped module and rejects the version inside any
+string the module *evaluates*, in any quoting and inside an f-string, with
+docstrings and comments excluded so a module can still name the release it
+describes in prose. Re-run against the audit's own mutation it goes red — 2
+failed, this gate and the sentinel gate — and the old assertion, evaluated
+against the same mutated file, still returns green. A companion gate feeds the
+scanner a throwaway module so it cannot become vacuous.
+
+**An ungated version literal in the README (audit finding 8).** README.md
+shows the footer as `Generated by credit-memo 0.2.2`, which goes silently stale
+at 0.3.0 — and this package has shipped nine false version attributions in
+prose before. A gate now holds every `Generated by credit-memo <version>`
+example in README.md to the installed `__version__`. It is scoped to the
+example on purpose: sentences *about* the 0.2.2 release stay 0.2.2 forever,
+because they are history.
+
+**Three claims in the shipped documentation were false.**
+
+A false claim in shipped docs stops a release in this portfolio, so all three
+were corrected rather than carried.
+
+1. **The README described a date parser that does not exist.** It said
+   `prepared_date` is read when written as `2026-05-06`, `2026/05/06`,
+   `May 6, 2026`, `6 May 2026`, "or those with a time". Measured:
+
+       '2026-05-06 09:30:00'   -> 2026-05-06 09:30:00
+       '2026-05-06T09:30:00'   -> 2026-05-06 09:30:00
+       'May 6, 2026 09:30'     -> None
+       '6 May 2026 09:30'      -> None
+       '2026/05/06 09:30:00'   -> None
+
+   **Only the ISO forms take a time.** It fails safe — the property is left
+   unset, never guessed — so nothing wrong reached a document, but the prose
+   was false. The prose is now a table of every documented spelling and whether
+   it is read, and a gate reads those rows out of README.md and holds each one
+   against `parse_prepared_date` in **both** directions. `PREPARED_DATE_FORMATS`
+   was **not** widened: that changes the metadata a memo carries for an input
+   that produces none today, which is a behaviour change and is 0.3.0.
+
+2. **This entry invented a tolerance that does not exist.** It said *"`Stable`
+   fired on exact equality of the two endpoints, a ±$1 band."* The first clause
+   is right and the appositive is not: the 0.2.1 implementation is bare `>` and
+   `<` with a fall-through, so the condition is zero-width. Corrected above.
+
+3. **The README overclaimed that the sentence can never contradict the table.**
+   It said *"there is no reading of the memo in which the sentence contradicts
+   the table."* Falsifiable at the MM/dollar crossover:
+
+       revenue_y1=999_999.996, revenue_y3=1_000_000
+
+       | Revenue | $1,000,000 | N/A | $1.00MM |
+       **Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of
+       $1.00MM is higher than Year -2 revenue of $1,000,000.
+
+   The sentence is **true** — the gap is four tenths of a cent — but a credit
+   officer reads `$1.00MM` and `$1,000,000` as the same number. The guard is
+   `first != last and first_text == last_text`, and here the two strings differ
+   while denoting the same reader-visible quantity. **The claim was narrowed,
+   not the guard widened**: widening needs a definition of when two cells in
+   different units denote the same quantity to a reader, which is design work
+   and is 0.3.0. The README now scopes the claim to endpoints that render in
+   the same unit and states the residual case in full, and a gate holds both
+   the rendering it quotes and the disclosure itself.
+
 ### Documented, not fixed
 
 **The impact-counter asymmetry.** `ImpactData.jobs_created` and `jobs_retained`
@@ -232,6 +384,28 @@ consequence, and a gate holds the current behaviour so the disclosure cannot go
 stale: applying the five counters' truthiness rule to the jobs rows reddens
 that gate and **nothing else in the suite**.
 
+**A non-finite figure still renders as `$nan` in the Revenue row.** The
+comparison sentence is now silent for such an endpoint, but
+`creditmemo.money.money` still writes `$nan` / `$infMM` into the table cell.
+That is the formatter's rendering of a non-finite magnitude and changing it is
+the formatter sweep 0.3.0 already owns. A cell reading `$nan` is visibly not a
+dollar figure; the sentence was a *claim*, which is why the two were separated.
+
+**The memo body still renders `None` for an unstated `prepared_by`,
+`deal_name` or `prepared_date`.** Older than this release and already disclosed
+as a 0.2.x limitation. 0.2.2 fixes only the document metadata, which is the
+part this release introduced. A gate holds the body's current behaviour so the
+disclosure cannot go stale.
+
+**`FinancialData` figures of type `Decimal` at or above $1,000,000 raise.**
+Found while checking which types can reach the non-finite guard, and reported
+rather than fixed: `creditmemo.money.money` computes `magnitude / MM_MIN` with
+`MM_MIN` a `float`, and `Decimal / float` raises
+`TypeError: unsupported operand type(s)`. Below the crossover the same value
+renders correctly. This is pre-existing — it is in the published 0.2.1 wheel
+too — it fails loudly rather than silently, and the fix belongs to the
+formatter sweep. **0.3.0.**
+
 ### Considered and left out of scope
 
 - **A real revenue trend classifier** over all supplied points with a
@@ -246,6 +420,22 @@ that gate and **nothing else in the suite**.
   that are not.
 - **Validating `deal_name` / `prepared_by` / `prepared_date`**, still disclosed
   as a 0.2.x limitation. Typing `prepared_date` is a schema change.
+- **Widening `PREPARED_DATE_FORMATS`** so a time can follow the non-ISO
+  spellings. The README was narrowed to the parser instead. It is a behaviour
+  change — an input that produces no metadata today would start producing
+  some — and it is **0.3.0**.
+- **Widening the sub-precision guard to compare cells as quantities** rather
+  than as rendered strings, which is what the MM/dollar crossover case would
+  need. It requires a definition of "these two cells denote the same figure"
+  across unit formats, and that definition interacts with the unit-consistency
+  plan already recorded for 0.3.0. **0.3.0**, and recorded there.
+- **Input validation on the revenue fields.** The non-finite fix is silence,
+  not a refusal: rejecting a `nan` at construction is a schema change and would
+  break a caller who builds a `FinancialData` field by field off a sheet.
+- **`cp.lastModifiedBy`, `cp.revision`, `cp.category`, `cp.subject` and
+  `cp.keywords`**, which python-docx's template leaves empty and which this
+  release still does not set. Nothing false is written into any of them; the
+  scope here was the properties that carried a false value.
 
 ## [0.2.1] — 2026-09-08
 

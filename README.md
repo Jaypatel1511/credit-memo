@@ -137,14 +137,55 @@ and loan files get examined; every document management system sorts and filters
 on that date, and it was false for every memo in the folder.
 
 `prepared_date` is a free-form string and stays one. It is read as a date when
-it is written unambiguously — `2026-05-06`, `2026/05/06`, `May 6, 2026`,
-`6 May 2026`, or those with a time — and otherwise the Created and Modified
-properties are left genuinely **unset** rather than guessed at. `05/06/2026` is
-in the unreadable set on purpose: reading it means choosing between 5 June and
-6 May. Modified is set to the same value as Created, because this package
-writes the document once and never edits it. No timezone is invented; a naive
-date is written at midnight, and python-docx's core-property encoding appends
-a `Z` to it.
+it is written in one of the spellings below, and otherwise the Created and
+Modified properties are left genuinely **unset** rather than guessed at.
+
+| `prepared_date` written as | Read as a date |
+|----------------------------|----------------|
+| `2026-05-06`               | yes |
+| `2026/05/06`               | yes |
+| `May 6, 2026`              | yes |
+| `May 6 2026`               | yes |
+| `Jun 6, 2026`              | yes |
+| `Jun 6 2026`               | yes |
+| `6 May 2026`               | yes |
+| `6 Jun 2026`               | yes |
+| `2026-05-06 09:30:00`      | yes |
+| `2026-05-06T09:30:00`      | yes |
+| `2026/05/06 09:30:00`      | no |
+| `May 6, 2026 09:30`        | no |
+| `6 May 2026 09:30`         | no |
+| `05/06/2026`               | no |
+
+**A time of day is read only after the ISO `YYYY-MM-DD` date** — the two
+spellings above that carry one, and no others. Through 0.2.2 this paragraph
+listed `2026-05-06`, `2026/05/06`, `May 6, 2026` and `6 May 2026` and said "or
+those with a time", which was false for three of the four: measured,
+`2026/05/06 09:30:00`, `May 6, 2026 09:30` and `6 May 2026 09:30` are all
+unreadable and leave the properties unset. The prose is narrowed to what the
+parser does rather than the parser widened to match the prose — widening
+`PREPARED_DATE_FORMATS` changes the metadata a memo carries for an input that
+produces none today, which is a behaviour change and is **0.3.0**. Either way
+it fails safe: an unreadable date leaves the property absent and never guesses
+at one.
+
+`05/06/2026` is in the unreadable set on purpose: reading it means choosing
+between 5 June and 6 May. Modified is set to the same value as Created, because
+this package writes the document once and never edits it. No timezone is
+invented; a naive date is written at midnight, and python-docx's core-property
+encoding appends a `Z` to it. **The table above is gated**: a test reads those
+rows out of this file and holds every one of them against the parser, in both
+directions, so the parser and this list cannot drift apart.
+
+**Author and Title are written only when the deal states them.** `prepared_by`
+and `deal_name` are declared `str` and neither is validated, so `None` reaches
+the renderer through an ordinary field-by-field build. Through 0.2.2 that wrote
+the literal word `None` into the Word file's Author, which is a claim about who
+wrote a loan-file document. A `None`, empty or whitespace-only value now leaves
+the property **absent**, exactly as an unreadable `prepared_date` leaves the
+dates absent — nothing is substituted and nothing raises. The memo *body*
+still prints `None` for these fields; that predates 0.2.2, is a separate defect,
+and is 0.3.0.
 
 `save_docx()` refuses text containing control characters — a vertical tab or
 form feed, which is what a paste out of a PDF often leaves behind — and names
@@ -250,9 +291,36 @@ fixed by moving the crossover: at exact cents the same pair would be a fraction
 of a cent apart. The comparison is computed on raw values on purpose; computing
 it on the rendered figures would make the memo's one analytical claim a
 function of the formatter and would report no change for a real one. What 0.2.2
-adds is the wording above: the sentence says the difference is too small for
-the row to show rather than naming two figures the table prints identically,
-so there is no reading of the memo in which the sentence contradicts the table.
+adds is the wording above: **where both endpoints render in the same unit**, the
+sentence says the difference is too small for the row to show rather than naming
+two figures the table prints identically.
+
+**The residual case is the crossover itself, and it is not closed.** When one
+endpoint falls just below $1,000,000 and the other at or above it, the two cells
+render in *different* units, and the guard that produces the wording above does
+not fire — it asks whether the two rendered strings are identical, and here
+they differ:
+
+    revenue_y1=999_999.996, revenue_y3=1_000_000
+
+    | Revenue | $1,000,000 | N/A | $1.00MM |
+    **Revenue, Year -2 vs Most Recent:** Higher — Most Recent revenue of
+    $1.00MM is higher than Year -2 revenue of $1,000,000. This compares those
+    two columns only; Year -1 is not read.
+
+The sentence is true: the gap is four tenths of a cent, and both cells are
+honest roundings of their inputs. But a credit officer reads `$1.00MM` and
+`$1,000,000` as the same number, and the sentence calls one higher than the
+other — so this *is* a reading of the memo in which the sentence appears to
+contradict the table, and the flat claim this paragraph used to make ("there is
+no reading of the memo in which the sentence contradicts the table") was
+falsifiable. Making the guard fire here requires defining when two cells in
+different units denote the same quantity *to a reader*, which is a design
+question rather than a one-line widening; it is **0.3.0**, alongside the
+unit-consistency work above, which would also dissolve this case by rendering
+the whole table in one unit. Until then the claim is the narrow one, and this
+paragraph is the disclosure of what it does not cover. The rendering shown here
+is gated, so the disclosure cannot go stale.
 
 ---
 

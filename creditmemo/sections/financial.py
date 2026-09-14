@@ -1,4 +1,5 @@
 """Financial Analysis section generator."""
+import math
 from typing import Optional
 
 from creditmemo.data.schema import DealProfile, _reject_fractional_ltv
@@ -58,6 +59,44 @@ ENDPOINT_SCOPE_CLAUSE = (
 )
 
 
+def _is_finite(value) -> bool:
+    """
+    True if ``value`` is a real number this package can compare and quote.
+
+    ``nan``, ``inf`` and ``-inf`` are not. A predicate that cannot judge the
+    type at all also answers False: it has not established that the value is a
+    number, and the caller's only use for the answer is deciding whether to
+    state a sentence about it.
+
+    **Which types were checked, and how.** Measured with
+    ``math.isfinite`` on CPython 3.10.12: ``int`` (including ``10**30``),
+    ``float``, ``bool`` and ``decimal.Decimal`` all answer, for finite and for
+    non-finite values alike — ``Decimal("NaN")`` and ``Decimal("Infinity")``
+    answer ``False``. So does ``numpy.float64`` and ``numpy.int64``, which is
+    what pandas hands over: ``pd.DataFrame({"rev": [1e6, None]})["rev"][1]`` is
+    ``numpy.float64(nan)``, **not** ``None``, and ``math.isfinite`` returns
+    ``False`` for it. That is the route this guard exists for — a blank cell in
+    a spreadsheet of borrower financials.
+
+    ``pandas.NA`` and ``pandas.NaT`` are the two that ``math.isfinite``
+    *raises* on (``TypeError: must be real number``), which is why the call is
+    wrapped. Both already raise earlier than this function in a full render —
+    measured on the 0.2.2 wheel, ``money(pd.NA)`` raises ``boolean value of NA
+    is ambiguous`` and ``money(pd.NaT)`` raises ``bad operand type for abs()``,
+    and the Revenue table row is built before this sentence — so nothing about
+    their end-to-end behaviour changes here. The wrapping is for a caller who
+    reaches :func:`revenue_endpoint_line` directly: it gets silence rather than
+    a traceback, and silence is what an unjudgeable endpoint means.
+
+    This is not input validation and it does not raise. See R20: validating
+    would be a schema change.
+    """
+    try:
+        return math.isfinite(value)
+    except (TypeError, ValueError):
+        return False
+
+
 def revenue_endpoint_line(f) -> Optional[str]:
     """
     The one sentence the memo states about revenue, or ``None``.
@@ -86,9 +125,37 @@ def revenue_endpoint_line(f) -> Optional[str]:
     gets its own wording, which states the direction, states that the row
     cannot show it, and quotes the single string both endpoints render as.
     Gated by ``test_g10b_a_sub_precision_difference_is_not_claimed_as_two``.
+
+    **A non-finite endpoint states nothing (R25).** ``nan``, ``inf`` and
+    ``-inf`` produce no sentence, the same way a missing endpoint already
+    produces none. ``nan != nan`` is ``True``, so 0.2.2 routed a ``nan``
+    endpoint into the ``Unchanged`` fall-through, whose verb is *equals*, and
+    the sub-precision branch above then wrote::
+
+        | Revenue | $nan | N/A | $3.00MM |
+        **Revenue, Year -2 vs Most Recent:** Unchanged — Most Recent revenue of
+        $3.00MM equals Year -2 revenue of $nan. ...
+
+    which states that $3.00MM equals $nan. 0.2.1 rendered the same input as
+    *"Stable — revenue has been stable over the historical period"*, so this is
+    not a regression; it is a false sentence in the one place this release
+    exists to make unfalsifiable, and "not a regression" is not a reason to
+    keep it. It is also reachable without anyone constructing a ``nan`` on
+    purpose: a blank cell read through pandas is ``numpy.float64(nan)``, which
+    is the route R20's comment below already describes.
+
+    Silence asserts nothing, so nothing about it can mislead — the same
+    reasoning the missing-endpoint case is decided on. The Revenue *table row*
+    still prints ``$nan``, because that is
+    :func:`creditmemo.money.money`'s rendering of a non-finite magnitude and
+    changing it is the formatter question 0.3.0 holds; a cell reading ``$nan``
+    is visibly not a dollar figure, whereas the sentence was a claim.
+    Gated by ``test_g20_a_non_finite_endpoint_states_nothing``.
     """
     first, last = f.revenue_y1, f.revenue_y3
     if first is None or last is None:
+        return None
+    if not (_is_finite(first) and _is_finite(last)):
         return None
 
     if last > first:
