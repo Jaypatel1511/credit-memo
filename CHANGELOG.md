@@ -3,12 +3,7 @@
 All notable changes to credit-memo are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [0.2.2] — UNRELEASED (date set at tag time)
-
-**The date above is a placeholder and is deliberately not today's.** Two recent
-releases in this portfolio shipped with a CHANGELOG date one to two days
-earlier than the tag, because the entry was dated when it was written. The
-convention now is to date the entry at tag time, from the tag.
+## [0.2.2] — 2026-09-14
 
 Everything measured in this entry was measured on CPython 3.10.12 with
 python-docx 1.2.0, against the code on this branch, and the "before" figures
