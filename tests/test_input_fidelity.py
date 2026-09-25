@@ -43,8 +43,20 @@ PACKAGE = ROOT / "creditmemo"
 
 
 def _package_sources():
-    """Every shipped .py file. tests/ is deliberately not among them."""
-    return sorted(PACKAGE.rglob("*.py"))
+    """Every shipped .py file. tests/ is deliberately not among them.
+
+    Reads the SOURCE TREE, so every gate that calls this is marked `repo` and
+    deselected by release.yml's packaged-layout jobs, whose run directory holds
+    only tests/, pyproject.toml and README.md. There, ``PACKAGE`` does not exist
+    and ``rglob`` returns nothing without raising -- measured: every such gate
+    PASSED on zero files. The assertion below turns that silent vacuity into a
+    failure should the deselection ever be dropped.
+    """
+    sources = sorted(PACKAGE.rglob("*.py"))
+    assert sources, (
+        f"no .py files under {PACKAGE} -- this gate reads the source tree and "
+        f"is running outside the checkout; it should be marked `repo`")
+    return sources
 
 
 def _deal(borrower=None, impact=None, risks=None, financials=None,
@@ -204,6 +216,7 @@ def test_g5_the_empty_risk_sentence_is_exactly_as_ruled():
     assert RULED_NO_RISKS_TEXT in md
 
 
+@pytest.mark.repo
 def test_g5_no_shipped_module_asserts_that_risks_do_not_exist():
     """
     G5. The package must contain no sentence claiming, as a finding, that the
@@ -310,6 +323,7 @@ def test_g7_a_nonprofit_memo_never_asserts_a_501_status():
     assert "501" not in md
 
 
+@pytest.mark.repo
 def test_g7_no_shipped_module_mentions_a_501_status():
     for path in _package_sources():
         text = io.open(path, encoding="utf-8").read()
@@ -970,6 +984,7 @@ def test_g13_is_not_vacuous(tmp_path):
         "no bulleted paragraph in the memo — half two would pass vacuously")
 
 
+@pytest.mark.repo
 def test_g13_no_shipped_module_asks_word_for_a_number():
     """
     G13's declaration half: the ruling, stated where a reader of the renderer
@@ -2350,6 +2365,7 @@ def _imports(source, module):
                           source, re.M))
 
 
+@pytest.mark.repo
 def test_every_declared_runtime_dependency_is_actually_imported():
     """
     0.1.0 and 0.2.0 declared `pandas>=1.4.0` as a hard runtime dependency. No
@@ -2368,6 +2384,7 @@ def test_every_declared_runtime_dependency_is_actually_imported():
             f"{dep!r} is declared as a runtime dependency but never imported")
 
 
+@pytest.mark.repo
 def test_the_declared_dependency_gate_is_not_vacuous():
     """
     Guard the guard, per F9.
@@ -3356,6 +3373,7 @@ def test_g10b_the_rendered_label_and_the_legacy_property_agree(y1, y3, direction
     assert f"{ENDPOINT_PREFIX} {RENDERED_LABEL_FOR[f.revenue_trend]} — " in md
 
 
+@pytest.mark.repo
 def test_g10b_no_shipped_module_renders_the_old_sentence():
     """
     The old wording may be quoted in a docstring as the thing being described,
@@ -3637,6 +3655,7 @@ def _evaluated_string_literals(path):
             and id(node) not in docstrings]
 
 
+@pytest.mark.repo
 def test_g16_no_shipped_module_writes_the_version_as_a_literal():
     """
     The version lives in pyproject.toml and creditmemo/__init__.py, and

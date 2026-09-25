@@ -8,6 +8,8 @@ import io
 import re
 from pathlib import Path
 
+import pytest
+
 import creditmemo
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +30,7 @@ def test_dunder_version_matches_pyproject():
     assert creditmemo.__version__ == _pyproject_version()
 
 
+@pytest.mark.repo
 def test_setup_py_declares_no_duplicate_version():
     """setup.py is a shim; pyproject.toml is the single source of truth."""
     text = io.open(ROOT / "setup.py", encoding="utf-8").read()
